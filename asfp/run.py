@@ -64,6 +64,35 @@ def main():
     hist.insert(0, "run_utc", dt.datetime.utcnow().isoformat(timespec="seconds"))
     hist.to_csv(histfile, mode="a", header=not os.path.exists(histfile), index=False)
 
+    # --- non-fatal validation vs FRED's published series -------------------
+    # confirms our breakevens/real match the official numbers, so phi (their
+    # difference vs Cleveland Fed expected inflation) is trustworthy.
+    try:
+        idx = df.index.to_numpy()
+        zf = lambda col, t: float(np.interp(t, idx, df[col].to_numpy()))
+        checks = [
+            ("breakeven_5y", "T5YIE", zf("breakeven", 5)),
+            ("breakeven_10y", "T10YIE", zf("breakeven", 10)),
+            ("breakeven_5y5y_fwd", "T5YIFR", hp["5y5y_breakeven"]),
+            ("real_5y", "DFII5", zf("real", 5)),
+            ("real_10y", "DFII10", zf("real", 10)),
+            ("real_30y", "DFII30", zf("real", 30)),
+        ]
+        rows = []
+        for metric, sid, model_val in checks:
+            fred_val, fdate = ds.fetch_fred_latest(key, sid)
+            if fred_val is None:
+                continue
+            rows.append(dict(metric=metric, model=round(model_val, 4),
+                             fred=round(fred_val, 4),
+                             diff_bp=round((model_val - fred_val) * 100, 1),
+                             fred_date=fdate))
+        if rows:
+            pd.DataFrame(rows).to_csv(f"{OUTDIR}/validation_latest.csv", index=False)
+            print("validation vs FRED written")
+    except Exception as e:
+        print(f"validation step skipped (non-fatal): {e}")
+
     print(f"OK  as_of={as_of}  cf_date={cf_date}  rows={len(curve)}")
 
 

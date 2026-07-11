@@ -71,6 +71,19 @@ def latest_gsw_params(text):
     )
 
 
+def fetch_fred_latest(api_key, series_id, timeout=60):
+    """Latest non-missing observation of a FRED series -> (value, date)."""
+    params = dict(series_id=series_id, api_key=api_key, file_type="json",
+                  sort_order="desc", limit=1)
+    r = requests.get(FRED_OBS_URL, params=params, timeout=timeout)
+    r.raise_for_status()
+    for o in r.json().get("observations", []):
+        v = o.get("value", ".")
+        if v not in (".", "", None):
+            return float(v), o.get("date")
+    return None, None
+
+
 def fetch_expinf(api_key, timeout=60):
     """Cleveland Fed expected inflation from FRED, interpolated onto years 1..30.
 
