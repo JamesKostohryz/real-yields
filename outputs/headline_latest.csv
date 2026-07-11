@@ -1,2 +1,12 @@
-as_of,real_5y,real_10y,real_30y,breakeven_10y,exp_infl_10y,5y5y_breakeven,5y5y_exp_infl,5y5y_real,slope_real_2s10s,slope_nominal_2s10s
-2026-07-02,1.945,2.2652,2.8477,2.2894,2.4888,2.304,2.4354,2.5855,0.2122,0.4764
+item,value
+as_of,2026-07-02
+real_5y,1.9683
+real_10y,2.269
+real_30y,2.8766
+breakeven_10y,2.2857
+exp_infl_10y,2.4888
+5y5y_breakeven,2.3198
+5y5y_exp_infl,2.4354
+5y5y_real,2.5697
+slope_real_2s10s,0.443
+slope_nominal_2s10s,0.4764
