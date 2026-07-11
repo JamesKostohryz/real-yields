@@ -48,6 +48,42 @@ def reliability_weight(taus, tau_lo, tau_hi, window):
     return np.clip(w, 0.0, 1.0)
 
 
+def whittaker_smooth(y, w, lam):
+    """Penalized smoother: minimize sum w_i (z_i - y_i)^2 + lam * sum (D2 z)^2.
+    High w = trust the point (fit closely); low w = allow more smoothing.
+    `lam` sets overall smoothing strength (penalizes curvature)."""
+    y = np.asarray(y, dtype=float)
+    w = np.asarray(w, dtype=float)
+    n = len(y)
+    D = np.zeros((n - 2, n))
+    for i in range(n - 2):
+        D[i, i] = 1.0
+        D[i, i + 1] = -2.0
+        D[i, i + 2] = 1.0
+    A = np.diag(w) + lam * (D.T @ D)
+    return np.linalg.solve(A, w * y)
+
+
+def _fidelity_profile(grid):
+    """Per-maturity trust weights for smoothing: hold the 5-18y core tightly,
+    smooth GSW's noisy short end (2-4y) and the model-constructed 1y and 20-30y
+    more."""
+    grid = np.asarray(grid, dtype=float)
+    w = np.ones_like(grid)
+    for i, m in enumerate(grid):
+        if m <= 1:
+            w[i] = 0.25
+        elif m <= 4:
+            w[i] = 0.45
+        elif m <= 18:
+            w[i] = 1.0
+        elif m <= 20:
+            w[i] = 0.70
+        else:
+            w[i] = 0.35
+    return w
+
+
 def extrapolate_phi(taus, phi_obs_func, tau_lo, tau_hi, front_floor, tail_damp):
     """Extrapolated premium spread phi_hat on `taus`.
 
@@ -93,7 +129,8 @@ def build_cross_section(nominal_params, real_params, cf_expinf, nowcast_1yr,
     grid = np.asarray(grid, dtype=float)
 
     c = dict(tau_lo=2.0, tau_hi=20.0, front_floor=-0.15,
-             tail_damp=0.5, seam_window=1.0, nowcast_blend_to=2.0)
+             tail_damp=0.5, seam_window=1.0, nowcast_blend_to=2.0,
+             smooth=True, smooth_lambda=30.0)
     if calib:
         c.update(calib)
 
@@ -134,8 +171,14 @@ def build_cross_section(nominal_params, real_params, cf_expinf, nowcast_1yr,
     # --- blend GSW real (trusted band) with constructed real (front/back) ---
     w = reliability_weight(grid, c["tau_lo"], c["tau_hi"], c["seam_window"])
     real = w * real_gsw + (1 - w) * real_constructed
+
+    # light penalized smoothing to temper GSW's noisy short end and the seams,
+    # so the forward strip (which amplifies point-to-point noise) stays clean
+    if c.get("smooth", True):
+        real = whittaker_smooth(real, _fidelity_profile(grid), c["smooth_lambda"])
+
     breakeven = nominal - real
-    # keep phi consistent with the blended breakeven
+    # keep phi consistent with the (smoothed) real curve
     phi = breakeven - exp_infl
 
     # --- provenance ---

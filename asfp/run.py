@@ -18,7 +18,9 @@ from . import model
 OUTDIR = "outputs"
 GRID = np.arange(1, 31, dtype=float)
 
-CURVE_COLS = ["as_of", "maturity", "nominal", "real", "breakeven",
+# as_of lives on the headline tab (kept out of the curve rows so Google Sheets
+# doesn't render a date serial in every row)
+CURVE_COLS = ["maturity", "nominal", "real", "breakeven",
               "exp_inflation", "phi", "nominal_fwd1y", "real_fwd1y",
               "breakeven_fwd1y", "exp_inflation_fwd1y", "reliability", "provenance"]
 
@@ -45,18 +47,20 @@ def main():
     as_of = max(nom["date"], real["date"])
     os.makedirs(OUTDIR, exist_ok=True)
 
-    out = df.reset_index()
-    out.insert(0, "as_of", as_of)
-    curve = out[CURVE_COLS].round(4)
+    curve = df.reset_index()[CURVE_COLS].round(4)
     curve.to_csv(f"{OUTDIR}/curve_latest.csv", index=False)
 
+    # headline tab carries the as-of date + the watched summary points
     hp = model.headline_points(df)
-    pd.DataFrame([{"as_of": as_of, **{k: round(v, 4) for k, v in hp.items()}}]) \
-        .to_csv(f"{OUTDIR}/headline_latest.csv", index=False)
+    pd.DataFrame(
+        [{"item": "as_of", "value": as_of}]
+        + [{"item": k, "value": round(v, 4)} for k, v in hp.items()]
+    ).to_csv(f"{OUTDIR}/headline_latest.csv", index=False)
 
     # point-in-time history (git commits provide the vintage trail)
     histfile = f"{OUTDIR}/history.csv"
     hist = curve.copy()
+    hist.insert(0, "as_of", as_of)
     hist.insert(0, "run_utc", dt.datetime.utcnow().isoformat(timespec="seconds"))
     hist.to_csv(histfile, mode="a", header=not os.path.exists(histfile), index=False)
 
