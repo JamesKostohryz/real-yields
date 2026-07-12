@@ -2,7 +2,10 @@ name: weekly-real-yields
 
 on:
   schedule:
-    - cron: "0 12 * * 3"
+    # every weekday at 12:00 UTC (~7am Central); rolls the curve to the latest
+    # daily FRED data. GSW itself only updates weekly, but the daily nominal/real
+    # moves roll it forward in between.
+    - cron: "0 12 * * 1-5"
   workflow_dispatch: {}
 
 permissions:
@@ -31,5 +34,6 @@ jobs:
           git config user.name "asfp-bot"
           git config user.email "asfp-bot@users.noreply.github.com"
           git add outputs/
-          git commit -m "weekly update" || echo "no changes to commit"
+          git commit -m "update $(date -u +%F)" || echo "no changes to commit"
+          git pull --rebase --autostash origin main || true
           git push
