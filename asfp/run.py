@@ -14,6 +14,8 @@ import pandas as pd
 
 from . import datasources as ds
 from . import model
+from . import curves
+from . import credit
 
 OUTDIR = "outputs"
 GRID = np.arange(1, 31, dtype=float)
@@ -39,23 +41,80 @@ def main():
     cf, cf_date = ds.fetch_expinf(key)
 
     pk = lambda d: {k: d[k] for k in ["b0", "b1", "b2", "b3", "t1", "t2"]}
-    # v1: front expected-inflation anchor = Cleveland Fed 1y (nowcast override is a later enhancement)
-    df = model.build_cross_section(pk(nom), pk(real), cf,
+    nominal_base = curves.svensson_zero(GRID, **pk(nom))
+    real_base = curves.svensson_zero(GRID, **pk(real))
+
+    # Roll the weekly GSW curves forward to today using the daily FRED moves
+    # (nominal DGS + real DFII) since each series' GSW as-of date. Non-fatal:
+    # if the roll fails, fall back to the plain weekly GSW curve.
+    as_of = max(nom["date"], real["date"])
+    nominal, real_gsw = nominal_base, real_base
+    try:
+        ndm, ndv, nlt = ds.fetch_curve_delta(key, ds.DGS_MAP, nom["date"])
+        rdm, rdv, rlt = ds.fetch_curve_delta(key, ds.DFII_MAP, real["date"])
+        if ndm:
+            nominal = model.roll_forward(nominal_base, GRID, ndm, ndv)
+        if rdm:
+            real_gsw = model.roll_forward(real_base, GRID, rdm, rdv, front_fill_below=5)
+        as_of = max(d for d in [nlt, rlt, as_of] if d)
+        print(f"rolled forward to {as_of} "
+              f"(nominal pts={len(ndm)}, real pts={len(rdm)})")
+    except Exception as e:
+        print(f"roll-forward skipped (non-fatal, using weekly GSW): {e}")
+
+    # v1: front expected-inflation anchor = Cleveland Fed 1y (nowcast override later)
+    df = model.build_cross_section(nominal, real_gsw, cf,
                                    nowcast_1yr=float(cf[0]),
                                    calib=CALIB, grid=GRID)
-
-    as_of = max(nom["date"], real["date"])
     os.makedirs(OUTDIR, exist_ok=True)
 
     curve = df.reset_index()[CURVE_COLS].round(4)
     curve.to_csv(f"{OUTDIR}/curve_latest.csv", index=False)
 
-    # headline tab carries the as-of date + the watched summary points
+    # display-ready summary (human labels, grouped) for the Summary tab
     hp = model.headline_points(df)
-    pd.DataFrame(
-        [{"item": "as_of", "value": as_of}]
-        + [{"item": k, "value": round(v, 4)} for k, v in hp.items()]
-    ).to_csv(f"{OUTDIR}/headline_latest.csv", index=False)
+    g = lambda k: round(hp[k], 3)
+    display_rows = [
+        ("As of", as_of),
+        ("", ""),
+        ("REAL YIELDS (%)", ""),
+        ("5-Year Real", g("real_5y")),
+        ("10-Year Real", g("real_10y")),
+        ("30-Year Real", g("real_30y")),
+        ("5y5y Forward Real", g("5y5y_real")),
+        ("", ""),
+        ("BREAKEVEN INFLATION (%)", ""),
+        ("5-Year Breakeven", g("breakeven_5y")),
+        ("10-Year Breakeven", g("breakeven_10y")),
+        ("30-Year Breakeven", g("breakeven_30y")),
+        ("5y5y Forward Breakeven", g("5y5y_breakeven")),
+        ("", ""),
+        ("EXPECTED INFLATION (%)", ""),
+        ("10-Year Expected Inflation", g("exp_infl_10y")),
+        ("5y5y Forward Expected Inflation", g("5y5y_exp_infl")),
+        ("", ""),
+        ("CURVE SLOPES (pp)", ""),
+        ("Real 2s10s", g("slope_real_2s10s")),
+        ("Nominal 2s10s", g("slope_nominal_2s10s")),
+    ]
+    pd.DataFrame(display_rows, columns=["Metric", "Value"]).to_csv(
+        f"{OUTDIR}/headline_latest.csv", index=False)
+
+    # lean history-of-key-points feed (one row per as-of date) for trend charts
+    hist_keys = ["nominal_5y", "nominal_10y", "nominal_30y",
+                 "real_5y", "real_10y", "real_30y", "5y5y_real",
+                 "breakeven_5y", "breakeven_10y", "breakeven_30y", "5y5y_breakeven",
+                 "exp_infl_5y", "exp_infl_10y", "exp_infl_30y",
+                 "slope_real_2s10s", "slope_nominal_2s10s"]
+    hist_row = {"as_of": as_of, **{k: round(hp[k], 4) for k in hist_keys}}
+    hhfile = f"{OUTDIR}/headline_history.csv"
+    if os.path.exists(hhfile):
+        h = pd.read_csv(hhfile)
+        h = h[h["as_of"].astype(str) != str(as_of)]      # one row per date
+        h = pd.concat([h, pd.DataFrame([hist_row])], ignore_index=True)
+    else:
+        h = pd.DataFrame([hist_row])
+    h.sort_values("as_of").to_csv(hhfile, index=False)
 
     # point-in-time history (git commits provide the vintage trail)
     histfile = f"{OUTDIR}/history.csv"
@@ -92,6 +151,15 @@ def main():
             print("validation vs FRED written")
     except Exception as e:
         print(f"validation step skipped (non-fatal): {e}")
+
+    # --- non-fatal: aggregate per-rating credit grid (cost-of-debt backbone) ---
+    try:
+        real_fwd = df["real_fwd1y"].to_numpy()
+        cg = credit.build_credit_grid(key, GRID, real_fwd)
+        cg.round(4).to_csv(f"{OUTDIR}/market_credit_latest.csv")
+        print("market credit grid written")
+    except Exception as e:
+        print(f"credit grid skipped (non-fatal): {e}")
 
     print(f"OK  as_of={as_of}  cf_date={cf_date}  rows={len(curve)}")
 

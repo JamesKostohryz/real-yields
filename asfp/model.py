@@ -110,16 +110,50 @@ def extrapolate_phi(taus, phi_obs_func, tau_lo, tau_hi, front_floor, tail_damp):
     return out
 
 
-def build_cross_section(nominal_params, real_params, cf_expinf, nowcast_1yr,
+def roll_forward(base, grid, delta_mats, delta_vals, front_fill_below=None):
+    """Shift a base zero curve by daily deltas observed at `delta_mats`.
+
+    `base` is a zero curve on `grid`; `delta_vals` are the daily changes at
+    `delta_mats` (e.g. FRED DGS/DFII moves since the GSW as-of date). The shift
+    is interpolated onto `grid`; below `front_fill_below` (e.g. 5y for DFII) the
+    nearest observed delta is carried in (the front moves with the 5y+ shift).
+    """
+    grid = np.asarray(grid, dtype=float)
+    dm = np.asarray(delta_mats, dtype=float)
+    dv = np.asarray(delta_vals, dtype=float)
+    order = np.argsort(dm)
+    dm, dv = dm[order], dv[order]
+    shift = np.interp(grid, dm, dv)          # flat-extrapolates outside range
+    if front_fill_below is not None:
+        shift = np.where(grid < front_fill_below, dv[0], shift)
+    return np.asarray(base, dtype=float) + shift
+
+
+def build_from_params(nominal_params, real_params, cf_expinf, nowcast_1yr,
+                      calib=None, grid=None):
+    """Convenience wrapper: evaluate GSW Svensson params into zero curves, then
+    build. Used by the weekly path."""
+    if grid is None:
+        grid = np.arange(1, 31, dtype=float)
+    grid = np.asarray(grid, dtype=float)
+    nominal = curves.svensson_zero(grid, **nominal_params)
+    real_gsw = curves.svensson_zero(grid, **real_params)
+    return build_cross_section(nominal, real_gsw, cf_expinf, nowcast_1yr,
+                               calib=calib, grid=grid)
+
+
+def build_cross_section(nominal, real_gsw, cf_expinf, nowcast_1yr,
                         calib=None, grid=None):
     """Return a DataFrame indexed by maturity (years) with the four curves,
     phi, forwards, discount factors and provenance flags.
 
     Parameters
     ----------
-    nominal_params, real_params : dicts with keys b0,b1,b2,b3,t1,t2 (percent)
+    nominal, real_gsw : zero-curve arrays (percent, cc) aligned to `grid`.
+                        For the weekly path these come from GSW Svensson params;
+                        for the daily path they are GSW curves rolled forward by
+                        the day's FRED moves.
     cf_expinf : array length len(grid) of Cleveland Fed expected inflation (pct)
-                aligned to `grid` maturities
     nowcast_1yr : float, near-term 1y expected inflation (pct)
     calib : dict of calibration settings (see defaults below)
     grid  : maturities in years (default 1..30 integer)
@@ -134,11 +168,8 @@ def build_cross_section(nominal_params, real_params, cf_expinf, nowcast_1yr,
     if calib:
         c.update(calib)
 
-    # --- nominal (observed everywhere) ---
-    nominal = curves.svensson_zero(grid, **nominal_params)
-
-    # --- real from GSW (trusted in band), and observed breakeven ---
-    real_gsw = curves.svensson_zero(grid, **real_params)
+    nominal = np.asarray(nominal, dtype=float)
+    real_gsw = np.asarray(real_gsw, dtype=float)
     bei_gsw = nominal - real_gsw            # GSW breakeven where trusted
 
     # --- expected inflation: Cleveland Fed, with nowcast override at the front
@@ -218,9 +249,13 @@ def headline_points(df):
         return (b * zb - a * za) / (b - a)
 
     return {
+        "nominal_5y": z("nominal", 5), "nominal_10y": z("nominal", 10),
+        "nominal_30y": z("nominal", 30),
         "real_5y": z("real", 5), "real_10y": z("real", 10), "real_30y": z("real", 30),
-        "breakeven_10y": z("breakeven", 10),
-        "exp_infl_10y": z("exp_inflation", 10),
+        "breakeven_5y": z("breakeven", 5), "breakeven_10y": z("breakeven", 10),
+        "breakeven_30y": z("breakeven", 30),
+        "exp_infl_5y": z("exp_inflation", 5), "exp_infl_10y": z("exp_inflation", 10),
+        "exp_infl_30y": z("exp_inflation", 30),
         "5y5y_breakeven": fwd("breakeven", 5, 10),
         "5y5y_exp_infl": fwd("exp_inflation", 5, 10),
         "5y5y_real": fwd("real", 5, 10),
