@@ -92,8 +92,17 @@ def fetch_company(ticker, avg_correlation=0.35):
 
     lev = economic_leverage(total_debt, cash, pensions, minority, market_equity)
 
-    # option-implied equity vol: near-the-money IV at ~1y expiration
-    equity_vol = _atm_iv(tk, price, target_days=365) or 0.25
+    # equity vol: option-implied ATM IV when the chain is fresh/plausible,
+    # else realized vol from ~1y of prices (robust to stale/after-hours option
+    # quotes that come back zero — e.g. a liquid name reading ~0% by mistake).
+    iv = _atm_iv(tk, price, target_days=365)
+    rv = _realized_vol(tk)
+    if iv is not None and 0.05 <= iv <= 2.0:
+        equity_vol = iv
+    elif rv is not None:
+        equity_vol = rv
+    else:
+        equity_vol = iv or rv or 0.25
     sigma_V = asset_vol_from_equity(equity_vol, lev["L"])
 
     return dict(ticker=ticker, price=price, **lev,
@@ -101,8 +110,12 @@ def fetch_company(ticker, avg_correlation=0.35):
                 avg_correlation=avg_correlation)
 
 
-def _atm_iv(tk, price, target_days=365):
-    """Robust at-the-money implied-vol read near a target horizon."""
+def _atm_iv(tk, price, target_days=365, band=(0.02, 3.0), window=0.15, n=4):
+    """At-the-money implied vol near `target_days`, hardened against bad quotes.
+
+    Drops NaN / zero / implausible IVs (outside `band`), keeps only strikes within
+    `window` moneyness of spot, and medians the nearest `n` per leg. Returns None
+    if nothing plausible survives (caller then falls back to realized vol)."""
     import datetime as _dt
     try:
         exps = tk.options
@@ -110,15 +123,37 @@ def _atm_iv(tk, price, target_days=365):
         return None
     if not exps:
         return None
-    # pick the expiration closest to target_days out
     def days(e):
         return abs((_dt.date.fromisoformat(e) - _dt.date.today()).days - target_days)
     exp = min(exps, key=days)
-    chain = tk.option_chain(exp)
+    try:
+        chain = tk.option_chain(exp)
+    except Exception:
+        return None
     ivs = []
     for leg in (chain.calls, chain.puts):
-        leg = leg.dropna(subset=["impliedVolatility"])
-        if len(leg):
-            leg = leg.assign(dist=(leg["strike"] - price).abs()).sort_values("dist")
-            ivs.extend(leg["impliedVolatility"].head(3).tolist())    # 3 nearest strikes
+        leg = leg.dropna(subset=["impliedVolatility"]).copy()
+        if not len(leg):
+            continue
+        iv = leg["impliedVolatility"]
+        leg = leg[(iv >= band[0]) & (iv <= band[1])
+                  & ((leg["strike"] - price).abs() <= window * price)]   # near the money
+        if not len(leg):
+            continue
+        leg = leg.assign(dist=(leg["strike"] - price).abs()).sort_values("dist")
+        ivs.extend(leg["impliedVolatility"].head(n).tolist())
     return float(np.median(ivs)) if ivs else None
+
+
+def _realized_vol(tk, lookback="1y"):
+    """Annualized realized vol from ~1y of daily closes. Always available and
+    independent of option-quote freshness — the fallback for the ATM-IV read."""
+    try:
+        h = tk.history(period=lookback, interval="1d")
+        close = h["Close"].dropna()
+        if len(close) < 30:
+            return None
+        rets = np.log(close / close.shift(1)).dropna()
+        return float(rets.std() * np.sqrt(252.0))
+    except Exception:
+        return None
