@@ -47,61 +47,96 @@ def parse_amount(x):
 
 
 def _num(x):
-    """Coerce a possibly-string numeric cell to float (fractions like 0.0582)."""
+    """Coerce a numeric cell to float. Handles decimals (0.0582), percent strings
+    ('5.82%' -> 0.0582, '115.25%' -> 1.1525), and thousands commas. This makes the
+    parser agnostic to whether the source exports raw values or formatted percents
+    (Google Sheets CSV export vs the gviz endpoint)."""
     if x is None:
         return np.nan
-    s = str(x).strip().replace(",", "").replace("%", "")
+    s = str(x).strip().replace(",", "")
+    if s in ("", "—", "-", "nan", "None"):
+        return np.nan
+    pct = s.endswith("%")
+    s = s.replace("%", "")
     try:
-        return float(s)
+        v = float(s)
     except ValueError:
         return np.nan
+    return v / 100.0 if pct else v
+
+
+def _locate_header(df):
+    """Find the bond header (row/columns containing a 'Symbol…' cell) whether it
+    sits in df.columns (clean CSV) or in a data row (header=None or a sheet with a
+    TICKER cell above the block). Returns (headers_list, body_df) positionally
+    indexed, or (None, None)."""
+    cols = [str(c).strip() for c in df.columns]
+    if any(c.lower().startswith("symbol") for c in cols):
+        body = df.copy()
+        body.columns = range(body.shape[1])
+        return cols, body.reset_index(drop=True)
+    for i in range(min(len(df), 40)):
+        row = [str(v).strip() for v in df.iloc[i].tolist()]
+        if any(v.lower().startswith("symbol") for v in row):
+            body = df.iloc[i + 1:].copy()
+            body.columns = range(body.shape[1])
+            return row, body.reset_index(drop=True)
+    return None, None
+
+
+_EMPTY_COLS = ["cusip", "description", "ytw", "price_frac", "coupon", "maturity",
+               "years", "outstanding", "face", "sp_rating", "issuer"]
 
 
 def parse_tradingview_bonds(df, asof="2026-07-12"):
-    """Normalize one issuer's TradingView bond sheet into a clean frame.
+    """Normalize an issuer's TradingView bond block into a clean frame.
 
-    Accepts the raw sheet (with or without an extra header row / unnamed cols).
-    Returns columns: cusip, description, ytw, price_frac, coupon, maturity,
-    years, outstanding, face, sp_rating, issuer  (one row per bond).
+    Robust to: clean CSV headers, doubled headers ('Symbol Symbol'), a TICKER cell
+    above the block, repeated header rows, and percent-formatted values.
+    Returns one row per bond with numeric ytw/price_frac/coupon as decimals.
     """
     df = df.copy()
-    # if columns are unnamed, the first row holds the real header
-    cols = [str(c) for c in df.columns]
-    if any(c.startswith("Unnamed") for c in cols):
-        header_idx = df.index[df.iloc[:, 0].astype(str).str.strip() == "Symbol"]
-        hrow = header_idx[0] if len(header_idx) else 0
-        df.columns = [str(v).strip() for v in df.iloc[hrow]]
-        df = df.iloc[hrow + 1:]
-    # drop any repeated header rows
-    df = df[df.iloc[:, 0].astype(str).str.strip() != "Symbol"].reset_index(drop=True)
+    headers, body = _locate_header(df)
+    if headers is None or body is None or len(body) == 0:
+        return pd.DataFrame(columns=_EMPTY_COLS)
 
-    def col(*names):
+    def pos(*names):
         for n in names:
-            for c in df.columns:
-                if str(c).strip().lower() == n.lower():
-                    return df[c]
-        return pd.Series([np.nan] * len(df))
+            for j, h in enumerate(headers):
+                if str(h).strip().lower().startswith(n.lower()):
+                    return j
+        return None
 
-    sym = col("Symbol").astype(str)
+    def colvals(*names):
+        j = pos(*names)
+        if j is None or j >= body.shape[1]:
+            return pd.Series([np.nan] * len(body))
+        return body.iloc[:, j].reset_index(drop=True)
+
+    # drop any repeated header rows inside the body
+    sym = colvals("symbol").astype(str)
+    keep = ~sym.str.strip().str.lower().str.startswith("symbol")
+    body = body[keep.values].reset_index(drop=True)
+
+    sym = colvals("symbol").astype(str)
     cusip = sym.str.extract(_CUSIP_RE, expand=False)
     asof_ts = pd.Timestamp(asof)
-    maturity = pd.to_datetime(col("Maturity date"), errors="coerce")
+    maturity = pd.to_datetime(colvals("maturity"), errors="coerce")
     years = (maturity - asof_ts).dt.days / 365.25
 
     out = pd.DataFrame({
-        "cusip": cusip,
-        "description": sym.str.replace(_CUSIP_RE, "", regex=True).str.strip(),
-        "ytw": col("YTW %", "YTW").map(_num),
-        "price_frac": col("Price %", "Price").map(_num),
-        "coupon": col("Coupon %", "Coupon").map(_num),
-        "maturity": maturity,
-        "years": years,
-        "outstanding": col("Outstanding amt", "Outstanding").map(parse_amount),
-        "face": col("Face value", "Face").map(parse_amount),
-        "sp_rating": col("S&P rating", "S&P").astype(str).str.strip(),
-        "issuer": col("Issuer").astype(str).str.strip(),
+        "cusip": cusip.values,
+        "description": sym.str.replace(_CUSIP_RE, "", regex=True).str.strip().values,
+        "ytw": colvals("ytw").map(_num).values,
+        "price_frac": colvals("price").map(_num).values,
+        "coupon": colvals("coupon").map(_num).values,
+        "maturity": maturity.values,
+        "years": years.values,
+        "outstanding": colvals("outstanding").map(parse_amount).values,
+        "face": colvals("face").map(parse_amount).values,
+        "sp_rating": colvals("s&p", "sp", "s & p").astype(str).str.strip().values,
+        "issuer": colvals("issuer").astype(str).str.strip().values,
     })
-    # keep only usable, non-matured bonds
     out = out[(out["years"] > 0.05) & out["ytw"].notna()
               & out["price_frac"].notna() & out["coupon"].notna()]
     return out.reset_index(drop=True)
