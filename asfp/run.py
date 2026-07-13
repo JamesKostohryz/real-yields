@@ -79,6 +79,8 @@ def main():
     curve_ann = curve[["maturity"] + ann_cols].copy()
     for c in ann_cols:
         curve_ann[c] = units.annualize_rate(curve_ann[c])
+    # the valuation engine keys per-horizon on `tenor`; publish under that name
+    curve_ann = curve_ann.rename(columns={"maturity": "tenor"})
     curve_ann.round(6).to_csv(f"{OUTDIR}/curve_latest_annual.csv", index=False)
 
     # display-ready summary (human labels, grouped) for the Summary tab
@@ -184,6 +186,20 @@ def main():
         eg_ann[["market_erp"]].round(6).to_csv(f"{OUTDIR}/erp_market_latest_annual.csv")
     except Exception as e:
         print(f"credit/erp grid skipped (non-fatal): {e}")
+
+    # --- non-fatal: measured average-stock variance (idiosyncratic term input) ---
+    # replaces the fixed-correlation assumption with a live large-cap basket average.
+    try:
+        from . import company as comp
+        avg_var, n = comp.basket_avg_variance()
+        pd.DataFrame([
+            {"field": "avg_stock_var", "value": round(avg_var, 6)},
+            {"field": "avg_stock_vol", "value": round(avg_var ** 0.5, 4)},
+            {"field": "n_names", "value": n},
+        ]).to_csv(f"{OUTDIR}/market_micro_latest.csv", index=False)
+        print(f"avg-stock variance written: {avg_var:.4f} (vol {avg_var**0.5:.1%}, n={n})")
+    except Exception as e:
+        print(f"avg-stock variance skipped (non-fatal): {e}")
 
     print(f"OK  as_of={as_of}  cf_date={cf_date}  rows={len(curve)}")
 

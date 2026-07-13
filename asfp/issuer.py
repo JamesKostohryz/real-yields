@@ -79,14 +79,21 @@ def build_cost_of_debt(cg, bonds=None, rating=None):
 
 # ------------------------------------------------------------ cost of equity
 def build_coe(grid, real_rf, market_erp, market_ig_spread, issuer_spread,
-              rating, fund, vix, params=None):
+              rating, fund, vix, avg_stock_var=None, params=None):
     """COE components DataFrame (real_rf, market_erp, credit_relative,
-    idiosyncratic, company_erp, real_coe) plus the k / idio_anchor used."""
+    idiosyncratic, company_erp, real_coe) plus the k / idio_anchor used.
+
+    If `avg_stock_var` (the measured average-stock variance) is supplied, the
+    idiosyncratic term uses it directly; otherwise it falls back to the
+    VIX + fixed-correlation proxy."""
     p = dict(MARKET); p.update(params or {})
     k = comp.merton_k(p["base_k"], fund["L"], fund["sigma_V"],
                       p["L_mkt"], p["sigma_V_mkt"], p["T"], p["r"])
-    idio_anchor = coe.idio_anchor_from_options(fund["equity_vol"], vix,
-                                               fund.get("avg_correlation", 0.35))
+    if avg_stock_var is not None:
+        idio_anchor = coe.idio_anchor_from_variance(fund["equity_vol"], avg_stock_var)
+    else:
+        idio_anchor = coe.idio_anchor_from_options(fund["equity_vol"], vix,
+                                                   fund.get("avg_correlation", 0.35))
     df = coe.assemble_coe(grid, real_rf, market_erp, market_ig_spread,
                           issuer_spread, rating, k, idio_anchor,
                           p=p["p"], lgd=p["lgd"])
@@ -95,7 +102,7 @@ def build_coe(grid, real_rf, market_erp, market_ig_spread, issuer_spread,
 
 # ------------------------------------------------------------ full assembly
 def assemble(ticker, cg, real_rf, market_erp, vix, fund, bonds=None,
-             rating=None, params=None):
+             rating=None, params=None, avg_stock_var=None):
     """Compute every per-company table (no I/O). Returns a dict of DataFrames
     and a meta dict. `cg` is the market credit grid (index tenor)."""
     grid = cg.index.to_numpy()
@@ -104,7 +111,8 @@ def assemble(ticker, cg, real_rf, market_erp, vix, fund, bonds=None,
     market_ig = cg["ig_index_spread"].to_numpy()
 
     coe_df, emeta = build_coe(grid, real_rf, market_erp, market_ig,
-                              issuer_spread, cmeta["rating"], fund, vix, params)
+                              issuer_spread, cmeta["rating"], fund, vix,
+                              avg_stock_var=avg_stock_var, params=params)
 
     # market value of debt + portfolio analytics (if bonds present)
     if bonds is not None and len(bonds):
@@ -113,9 +121,16 @@ def assemble(ticker, cg, real_rf, market_erp, vix, fund, bonds=None,
         summ = {}
 
     # annual-decimal variants
-    cod_annual = pd.DataFrame({"tenor": grid,
-                               "real_cod": units.annualize_rate(cod["real_cod"].to_numpy())
-                               }).set_index("tenor")
+    rating = cmeta["rating"]
+    cod_annual = pd.DataFrame({
+        "tenor": grid,
+        "real_cod": units.annualize_rate(cod["real_cod"].to_numpy()),
+        "spread": units.to_decimal(cod["spread"].to_numpy()),
+        "rating": cod["rating"].to_numpy(),
+        "offset": cod["offset"].to_numpy(),
+        f"real_cod_{rating}": units.annualize_rate(
+            cod[f"real_cod_{rating}"].to_numpy()),
+    }).set_index("tenor")
     ann = units.coe_annual_components(coe_df["real_rf"], coe_df["market_erp"],
                                       coe_df["credit_relative"], coe_df["idiosyncratic"])
     coe_annual = pd.DataFrame({"tenor": grid, **ann}).set_index("tenor")

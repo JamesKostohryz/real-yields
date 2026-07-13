@@ -64,3 +64,47 @@ def test_assemble_produces_all_components():
     s = ca["real_rf"] + ca["market_erp"] + ca["credit_relative"] + ca["idiosyncratic"]
     assert np.max(np.abs(s - ca["real_coe"])) < 1e-12
     assert meta["k"] > 0 and meta["rating"] == "BBB"
+
+
+def test_annual_files_match_engine_contract():
+    """The valuation engine binds to exact columns in the *_annual files and
+    fail-hard on drift. Lock the coe/cod annual headers so we can't break them."""
+    cg = _cg()
+    real_rf = cg["real_fwd"].to_numpy()
+    market_erp = 3.2 * 0.5 ** ((GRID - 1) / 8.0) + 1.0
+    tables, meta = issuer.assemble("T", cg, real_rf, market_erp, vix=18.0,
+                                   fund=_fund(), bonds=None, rating="BBB",
+                                   avg_stock_var=0.30 ** 2)
+    coe_cols = ["tenor"] + list(tables["coe_annual"].reset_index().columns[1:])
+    assert coe_cols == ["tenor", "real_rf", "market_erp", "credit_relative",
+                        "idiosyncratic", "company_erp", "real_coe"]
+    cod_cols = list(tables["cod_annual"].reset_index().columns)
+    assert cod_cols == ["tenor", "real_cod", "spread", "rating", "offset",
+                        "real_cod_BBB"]
+    # additive identity in annual-decimal space, to the engine's 1e-6 tolerance
+    ca = tables["coe_annual"]
+    s = (ca["real_rf"] + ca["market_erp"] + ca["credit_relative"]
+         + ca["idiosyncratic"])
+    assert float(np.max(np.abs(s - ca["real_coe"]))) < 1e-6
+
+
+def test_variance_based_idio_gives_smile():
+    from asfp import coe
+    # a name MORE volatile than the average stock earns a positive anchor...
+    assert coe.idio_anchor_from_variance(0.40, 0.30 ** 2) > 0
+    # ...and a defensive name below the average earns zero.
+    assert coe.idio_anchor_from_variance(0.20, 0.30 ** 2) == 0.0
+
+    cg = _cg()
+    real_rf = cg["real_fwd"].to_numpy()
+    market_erp = 3.2 * 0.5 ** ((GRID - 1) / 8.0) + 1.0        # decaying market ERP
+    fund = _fund(); fund["equity_vol"] = 0.40                 # well above the average
+    tables, meta = issuer.assemble("X", cg, real_rf, market_erp, vix=18.0,
+                                   fund=fund, bonds=None, rating="BBB",
+                                   avg_stock_var=0.30 ** 2)
+    assert meta["idio_anchor"] > 0
+    ce = tables["coe"]["company_erp"].to_numpy()
+    assert ce[29] > ce[19]        # long-end smile: 30y ERP above 20y, from rising idio
+    # and the idiosyncratic column itself rises with tenor
+    idio = tables["coe"]["idiosyncratic"].to_numpy()
+    assert idio[29] > idio[0]
