@@ -23,7 +23,24 @@ from . import datasources as ds
 IG_MATURITY = [(2.0, "BAMLC1A0C13Y"), (4.0, "BAMLC2A0C35Y"), (6.0, "BAMLC3A0C57Y"),
                (8.5, "BAMLC4A0C710Y"), (12.5, "BAMLC7A0C1015Y"), (20.0, "BAMLC8A0C15PY")]
 IG_OVERALL = "BAMLC0A0CM"                       # overall IG index OAS (the level)
-IG_RATING = {"AA": "BAMLC0A2CAA", "A": "BAMLC0A3CA", "BBB": "BAMLC0A4CBBB"}
+
+# Full rating family (ICE BofA OAS on FRED). Investment grade = C-series,
+# high yield = H-series. Each rating's LEVEL comes from its index OAS; the
+# term SHAPE is the IG maturity-bucket shape scaled multiplicatively (a mild
+# approximation for HY, whose real curves are flatter/humped — flagged for the
+# diagnostic-fan use, not used to reprice HY debt).
+RATING_SERIES = {
+    "AAA": "BAMLC0A1CAAA",     # US Corporate AAA
+    "AA":  "BAMLC0A2CAA",      # US Corporate AA
+    "A":   "BAMLC0A3CA",       # US Corporate A
+    "BBB": "BAMLC0A4CBBB",     # US Corporate BBB
+    "BB":  "BAMLH0A1HYBB",     # US High Yield BB
+    "B":   "BAMLH0A2HYB",      # US High Yield B
+    "CCC": "BAMLH0A3HYC",      # US High Yield CCC & lower
+}
+IG_RATING = {k: RATING_SERIES[k] for k in ("AA", "A", "BBB")}   # back-compat
+RATING_ORDER = ["AAA", "AA", "A", "BBB", "BB", "B", "CCC"]
+
 TSY = [(1.0, "DGS1"), (2.0, "DGS2"), (3.0, "DGS3"), (5.0, "DGS5"),
        (7.0, "DGS7"), (10.0, "DGS10"), (20.0, "DGS20"), (30.0, "DGS30")]
 
@@ -59,11 +76,40 @@ def build_from_knots(grid, ig_mat_knots, ig_overall, rating_anchors, tsy_knots, 
     return out.set_index("tenor")
 
 
-def build_credit_grid(api_key, grid, real_fwd):
-    """Fetch the FRED series and build the per-rating grid."""
+def issuer_real_cod(cg, rating, offset=1.0):
+    """Per-company REAL cost of debt (forward, by tenor) for the downstream
+    valuation engine's cod_<ticker>.csv.
+
+    Issuer curve = rating curve's spread x multiplicative offset (fitted from the
+    issuer's own bonds; offset=1.0 is the pure-rating fallback) added to the real
+    forward risk-free.  cg is the credit grid; `rating` in AAA..CCC.
+    Returns a DataFrame indexed by tenor with the issuer curve and its rating
+    fallback, all in percent (cc).
+    """
+    import pandas as pd
+    real_fwd = cg["real_fwd"].to_numpy()
+    spread = cg[f"spread_{rating}"].to_numpy() * float(offset)
+    return pd.DataFrame({
+        "tenor": cg.index.to_numpy(),
+        "real_cod": real_fwd + spread,               # issuer (offset-adjusted)
+        "spread": spread,
+        "rating": rating,
+        "offset": float(offset),
+        f"real_cod_{rating}": real_fwd + cg[f"spread_{rating}"].to_numpy(),  # fallback
+    }).set_index("tenor")
+
+
+def build_credit_grid(api_key, grid, real_fwd, ratings=None):
+    """Fetch the FRED series and build the per-rating grid.
+
+    `ratings` selects which of the full AAA..CCC family to fetch (default: all).
+    Ratings whose FRED series returns no data are skipped, so a temporary HY
+    outage still leaves the IG grid intact.
+    """
+    series = RATING_SERIES if ratings is None else {r: RATING_SERIES[r] for r in ratings}
     ig_mat = [(t, ds.fetch_fred_latest(api_key, sid)[0]) for t, sid in IG_MATURITY]
     ig_overall = ds.fetch_fred_latest(api_key, IG_OVERALL)[0]
-    anchors = {r: ds.fetch_fred_latest(api_key, sid)[0] for r, sid in IG_RATING.items()}
+    anchors = {r: ds.fetch_fred_latest(api_key, sid)[0] for r, sid in series.items()}
     tsy = [(t, ds.fetch_fred_latest(api_key, sid)[0]) for t, sid in TSY]
 
     ig_mat = [(t, v) for t, v in ig_mat if v is not None]

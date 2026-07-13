@@ -71,6 +71,12 @@ def latest_gsw_params(text):
     )
 
 
+# daily constant-maturity series used to roll the weekly GSW curves to "today"
+DGS_MAP = {1: "DGS1", 2: "DGS2", 3: "DGS3", 5: "DGS5", 7: "DGS7",
+           10: "DGS10", 20: "DGS20", 30: "DGS30"}          # nominal
+DFII_MAP = {5: "DFII5", 7: "DFII7", 10: "DFII10", 20: "DFII20", 30: "DFII30"}  # real
+
+
 def fetch_fred_latest(api_key, series_id, timeout=60):
     """Latest non-missing observation of a FRED series -> (value, date)."""
     params = dict(series_id=series_id, api_key=api_key, file_type="json",
@@ -82,6 +88,35 @@ def fetch_fred_latest(api_key, series_id, timeout=60):
         if v not in (".", "", None):
             return float(v), o.get("date")
     return None, None
+
+
+def fetch_fred_asof(api_key, series_id, asof_date, timeout=60):
+    """Latest non-missing observation on or before `asof_date` -> (value, date)."""
+    params = dict(series_id=series_id, api_key=api_key, file_type="json",
+                  sort_order="desc", limit=1, observation_end=asof_date)
+    r = requests.get(FRED_OBS_URL, params=params, timeout=timeout)
+    r.raise_for_status()
+    for o in r.json().get("observations", []):
+        v = o.get("value", ".")
+        if v not in (".", "", None):
+            return float(v), o.get("date")
+    return None, None
+
+
+def fetch_curve_delta(api_key, series_map, since_date):
+    """Daily change in each series since `since_date` (the GSW as-of date).
+    Returns (maturities, deltas, latest_date) for the points that have data."""
+    mats, deltas, latest = [], [], None
+    for m, sid in series_map.items():
+        cur, cdate = fetch_fred_latest(api_key, sid)
+        old, _ = fetch_fred_asof(api_key, sid, since_date)
+        if cur is None or old is None:
+            continue
+        mats.append(float(m))
+        deltas.append(cur - old)
+        if cdate and (latest is None or cdate > latest):
+            latest = cdate
+    return mats, deltas, latest
 
 
 def fetch_expinf(api_key, timeout=60):

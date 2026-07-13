@@ -16,6 +16,8 @@ from . import datasources as ds
 from . import model
 from . import curves
 from . import credit
+from . import erp
+from . import units
 
 OUTDIR = "outputs"
 GRID = np.arange(1, 31, dtype=float)
@@ -70,6 +72,14 @@ def main():
 
     curve = df.reset_index()[CURVE_COLS].round(4)
     curve.to_csv(f"{OUTDIR}/curve_latest.csv", index=False)
+
+    # annual-decimal variant for the valuation engine (rates via exp(cc/100)-1)
+    ann_cols = ["real", "real_fwd1y", "exp_inflation", "exp_inflation_fwd1y",
+                "breakeven", "breakeven_fwd1y", "nominal", "nominal_fwd1y"]
+    curve_ann = curve[["maturity"] + ann_cols].copy()
+    for c in ann_cols:
+        curve_ann[c] = units.annualize_rate(curve_ann[c])
+    curve_ann.round(6).to_csv(f"{OUTDIR}/curve_latest_annual.csv", index=False)
 
     # display-ready summary (human labels, grouped) for the Summary tab
     hp = model.headline_points(df)
@@ -158,8 +168,22 @@ def main():
         cg = credit.build_credit_grid(key, GRID, real_fwd)
         cg.round(4).to_csv(f"{OUTDIR}/market_credit_latest.csv")
         print("market credit grid written")
+
+        # market equity-risk-premium grid (Martin/VIX anchor + credit floor)
+        eg = erp.build_from_fred(key, GRID, cg["ig_index_spread"].to_numpy())
+        eg.round(4).to_csv(f"{OUTDIR}/erp_market_latest.csv")
+        print(f"market ERP grid written (VIX={eg.attrs.get('vix')})")
+
+        # annual-decimal variants for the valuation engine
+        cg_ann = cg.copy()
+        for c in [col for col in cg_ann.columns if col.startswith("real_")]:
+            cg_ann[c] = units.annualize_rate(cg_ann[c])
+        cg_ann.round(6).to_csv(f"{OUTDIR}/market_credit_latest_annual.csv")
+        eg_ann = eg.copy()
+        eg_ann["market_erp"] = units.to_decimal(eg_ann["market_erp"])
+        eg_ann[["market_erp"]].round(6).to_csv(f"{OUTDIR}/erp_market_latest_annual.csv")
     except Exception as e:
-        print(f"credit grid skipped (non-fatal): {e}")
+        print(f"credit/erp grid skipped (non-fatal): {e}")
 
     print(f"OK  as_of={as_of}  cf_date={cf_date}  rows={len(curve)}")
 
