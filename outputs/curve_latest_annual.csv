@@ -1,4 +1,4 @@
-maturity,real,real_fwd1y,exp_inflation,exp_inflation_fwd1y,breakeven,breakeven_fwd1y,nominal,nominal_fwd1y
+tenor,real,real_fwd1y,exp_inflation,exp_inflation_fwd1y,breakeven,breakeven_fwd1y,nominal,nominal_fwd1y
 1.0,0.017929,0.017929,0.030652,0.030652,0.023658,0.023658,0.04201,0.04201
 2.0,0.018469,0.019011,0.02788,0.025114,0.02294,0.022222,0.041833,0.041656
 3.0,0.01899,0.02003,0.026734,0.024447,0.022798,0.022513,0.04222,0.042995
