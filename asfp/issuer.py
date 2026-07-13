@@ -150,9 +150,11 @@ def write_outputs(outdir, ticker, tables, meta, fund):
     os.makedirs(outdir, exist_ok=True)
     t = ticker.upper()
     tables["cod"].round(4).to_csv(f"{outdir}/cod_{t}.csv")
-    tables["cod_annual"].round(6).to_csv(f"{outdir}/cod_{t}_annual.csv")
+    # annual files: publish at 9 dp so the additive-identity rounding residual
+    # (~1e-9) stays far inside the valuation engine's 1e-6 fail-loud tolerance.
+    tables["cod_annual"].round(9).to_csv(f"{outdir}/cod_{t}_annual.csv")
     tables["coe"].round(4).to_csv(f"{outdir}/coe_{t}.csv")
-    tables["coe_annual"].round(6).to_csv(f"{outdir}/coe_{t}_annual.csv")
+    tables["coe_annual"].round(9).to_csv(f"{outdir}/coe_{t}_annual.csv")
 
     # company_<T>.csv: fundamentals + debt analytics, long field,value form
     order = ["ticker", "price", "market_equity", "nfo", "L", "lambda0",

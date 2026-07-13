@@ -81,11 +81,12 @@ def test_annual_files_match_engine_contract():
     cod_cols = list(tables["cod_annual"].reset_index().columns)
     assert cod_cols == ["tenor", "real_cod", "spread", "rating", "offset",
                         "real_cod_BBB"]
-    # additive identity in annual-decimal space, to the engine's 1e-6 tolerance
-    ca = tables["coe_annual"]
+    # additive identity must survive PUBLISHED precision (what the engine reads).
+    # 9 dp keeps the rounding residual ~1e-9, far inside the engine's 1e-6 fail.
+    ca = tables["coe_annual"].round(9)
     s = (ca["real_rf"] + ca["market_erp"] + ca["credit_relative"]
          + ca["idiosyncratic"])
-    assert float(np.max(np.abs(s - ca["real_coe"]))) < 1e-6
+    assert float(np.max(np.abs(s - ca["real_coe"]))) < 1e-7
 
 
 def test_variance_based_idio_gives_smile():
