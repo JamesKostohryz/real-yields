@@ -1,0 +1,8 @@
+field,value
+ticker,T
+generated_utc,2026-07-13 18:01 UTC
+generated_iso,2026-07-13T18:01:02Z
+bonds_source,google-sheet
+n_bonds,143
+run_id,29272720474
+git_sha,8f8cce5
