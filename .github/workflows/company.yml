@@ -1,0 +1,33 @@
+name: company-data
+
+on:
+  workflow_dispatch:
+    inputs:
+      ticker:
+        description: "Ticker to pull (e.g. T, AAPL, HD)"
+        required: true
+        default: "T"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Pull company data
+        run: python -m asfp.run_company "${{ github.event.inputs.ticker }}"
+      - name: Commit
+        run: |
+          git config user.name "asfp-bot"
+          git config user.email "asfp-bot@users.noreply.github.com"
+          git add outputs/
+          git commit -m "company ${{ github.event.inputs.ticker }}" || echo "no changes"
+          git pull --rebase --autostash origin main || true
+          git push
