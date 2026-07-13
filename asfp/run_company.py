@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import sys
+import datetime as dt
 import numpy as np
 import pandas as pd
 
@@ -39,7 +40,17 @@ def _load_market():
     market_erp = erp["market_erp"].to_numpy()
     a_mkt = float(erp["a_mkt"].iloc[0]) if "a_mkt" in erp else (18.0 ** 2) / 100.0
     vix = float(np.sqrt(a_mkt * 100.0))
-    return cg, real_rf, market_erp, vix
+
+    # measured average-stock variance (idiosyncratic term); None -> fixed-corr fallback
+    avg_stock_var = None
+    mp = f"{OUTDIR}/market_micro_latest.csv"
+    if os.path.exists(mp):
+        try:
+            m = pd.read_csv(mp).set_index("field")["value"]
+            avg_stock_var = float(m.loc["avg_stock_var"])
+        except Exception:
+            avg_stock_var = None
+    return cg, real_rf, market_erp, vix, avg_stock_var
 
 
 def _load_committed_bonds(ticker):
@@ -85,13 +96,29 @@ def main():
         print(f"  ** WARNING: bonds' Issuer column does not look like {ticker} — "
               f"check the sheet holds {ticker}'s bonds, not another company's.")
 
-    cg, real_rf, market_erp, vix = _load_market()
+    cg, real_rf, market_erp, vix, avg_stock_var = _load_market()
 
     from . import company as comp                       # yfinance import deferred
     fund = comp.fetch_company(ticker)
 
-    tables, meta = issuer.assemble(ticker, cg, real_rf, market_erp, vix, fund, bonds)
+    tables, meta = issuer.assemble(ticker, cg, real_rf, market_erp, vix, fund, bonds,
+                                   avg_stock_var=avg_stock_var)
     written = issuer.write_outputs(OUTDIR, ticker, tables, meta, fund)
+
+    # freshness stamp: lets the Google Sheet show WHEN these numbers were generated
+    # and WHAT bonds fed them, so a stale IMPORTDATA cache is obvious at a glance.
+    now = dt.datetime.utcnow()
+    stamp = [
+        {"field": "ticker", "value": ticker},
+        {"field": "generated_utc", "value": now.strftime("%Y-%m-%d %H:%M UTC")},
+        {"field": "generated_iso", "value": now.isoformat(timespec="seconds") + "Z"},
+        {"field": "bonds_source", "value": source},
+        {"field": "n_bonds", "value": 0 if bonds is None else len(bonds)},
+        {"field": "run_id", "value": os.environ.get("GITHUB_RUN_ID", "local")},
+        {"field": "git_sha", "value": os.environ.get("GITHUB_SHA", "")[:7]},
+    ]
+    pd.DataFrame(stamp).to_csv(f"{OUTDIR}/run_stamp_{ticker}.csv", index=False)
+    written.append(f"run_stamp_{ticker}.csv")
 
     # archive the exact bonds this run used (audit trail; no manual tab-keeping)
     if bonds is not None:
