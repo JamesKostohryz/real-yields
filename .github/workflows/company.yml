@@ -22,7 +22,6 @@ permissions:
   contents: write
 
 env:
-  # shared Google Sheet holding the one reusable bond tab (view-by-link)
   BONDS_SHEET_ID: "1KnbQFHWFXhZZ7Fy2rB1KplWT3GYblNlIEWDh7BzLOC4"
 
 jobs:
@@ -44,3 +43,12 @@ jobs:
           OBS_CATEGORY: "${{ github.event.inputs.obs_category }}"
           ORY_OVERRIDE: "${{ github.event.inputs.ory_override }}"
         run: python -m asfp.run_company
+
+      - name: Commit
+        run: |
+          git config user.name "asfp-bot"
+          git config user.email "asfp-bot@users.noreply.github.com"
+          git add outputs/
+          git commit -m "company data update" || echo "no changes"
+          git pull --rebase --autostash origin main || true
+          git push
