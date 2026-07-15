@@ -120,6 +120,85 @@ def main():
     pd.DataFrame(stamp).to_csv(f"{OUTDIR}/run_stamp_{ticker}.csv", index=False)
     written.append(f"run_stamp_{ticker}.csv")
 
+    # --- v2 (non-breaking): total-risk single-name COE to 150y, from the VIX-curve
+    # market ERP. New files coe_v2_<T>_latest(.csv/_annual.csv); existing outputs
+    # untouched until the engine cuts over. Needs the weekly market_erp_v2 file. ---
+    try:
+        from . import total_risk_erp as trv, units
+        me2p = f"{OUTDIR}/market_erp_v2_latest.csv"
+        if not os.path.exists(me2p):
+            print("  coe v2 skipped: market_erp_v2_latest.csv missing (run weekly job first)")
+        else:
+            GV = np.arange(1, 151, dtype=float)
+            me2 = pd.read_csv(me2p).set_index("tenor").reindex(GV).interpolate().ffill().bfill()
+            mkt2 = me2["market_erp"].to_numpy()
+            cur = pd.read_csv(f"{OUTDIR}/curve_latest.csv").set_index("maturity")
+            rf2 = np.interp(GV, cur.index.to_numpy(), cur["real_fwd1y"].to_numpy())   # flat past 30y
+
+            # single-name option-implied vol TERM STRUCTURE (1m..2y); flat 1y fallback
+            stock_vol_ts = fund.get("equity_vol_ts") or [(1.0, float(fund.get("equity_vol", 0.25)) * 100.0)]
+            # index vol term structure implied by the market ERP via Martin (variance = ERP),
+            # sampled at the SAME tenors as the stock so R = σ_i/σ_mkt aligns tenor-by-tenor.
+            index_vol_ts = [(t, float(np.sqrt(max(np.interp(t, GV, mkt2), 0.01) * 100.0)))
+                            for t, _ in stock_vol_ts]
+            category = os.environ.get("OBS_CATEGORY", "B").strip().upper()[:1] or "B"  # Phase 4: from sheet
+            ory_ov = os.environ.get("ORY_OVERRIDE")
+            ory_ov = float(ory_ov) if ory_ov else None
+            coe2 = trv.assemble_coe_v2(GV, rf2, mkt2, stock_vol_ts, index_vol_ts,
+                                       meta["rating"], category, ory_override=ory_ov)
+            coe2.round(4).to_csv(f"{OUTDIR}/coe_v2_{ticker}_latest.csv")
+            # exact additive annual-decimal variant (marginal compounding)
+            rfp, mep, idp = (coe2[c].to_numpy() for c in ("real_rf", "market_erp", "idiosyncratic"))
+            l0 = np.expm1(rfp / 100); l1 = np.expm1((rfp + mep) / 100); l2 = np.expm1((rfp + mep + idp) / 100)
+            pd.DataFrame({"tenor": GV, "real_rf": l0, "market_erp": l1 - l0,
+                          "idiosyncratic": l2 - l1, "company_erp": l2 - l0, "real_coe": l2}
+                         ).set_index("tenor").round(9).to_csv(f"{OUTDIR}/coe_v2_{ticker}_latest_annual.csv")
+            written += [f"coe_v2_{ticker}_latest.csv", f"coe_v2_{ticker}_latest_annual.csv"]
+
+            # --- EFFECTIVE (collapsed) ERP: the whole term structure summarized as one
+            # cash-flow-PV-weighted rate, the equity analogue of a bond's YTM. Collapse
+            # nested cumulative curves so the effective pieces still add up. ---
+            from . import collapse as col
+            growth = float(os.environ.get("COE_CF_GROWTH", "2.0"))    # real CF growth for the weights
+            coe_curve = coe2["real_coe"].to_numpy()
+            rf_curve = coe2["real_rf"].to_numpy()
+            rfmkt_curve = rf_curve + coe2["market_erp"].to_numpy()
+            eff_coe = col.collapse_rate(GV, coe_curve, growth=growth)
+            eff_rf = col.collapse_rate(GV, rf_curve, growth=growth)
+            eff_rfmkt = col.collapse_rate(GV, rfmkt_curve, growth=growth)
+            eff_mkt = eff_rfmkt - eff_rf
+            eff_company = eff_coe - eff_rf
+            eff_idio = eff_company - eff_mkt
+            eff_rows = [
+                ("real_rf", round(eff_rf, 4)),
+                ("market_erp", round(eff_mkt, 4)),
+                ("idiosyncratic", round(eff_idio, 4)),
+                ("company_erp", round(eff_company, 4)),
+                ("real_coe", round(eff_coe, 4)),
+                ("cf_growth", round(growth, 3)),
+            ]
+            pd.DataFrame(eff_rows, columns=["field", "value_pct"]).to_csv(
+                f"{OUTDIR}/coe_v2_{ticker}_effective.csv", index=False)
+            # annual-decimal companion (rates via exp(cc/100)-1; premia as marginal steps)
+            e0 = np.expm1(eff_rf / 100); e1 = np.expm1((eff_rf + eff_mkt) / 100)
+            e2 = np.expm1((eff_rf + eff_mkt + eff_idio) / 100)
+            pd.DataFrame([
+                ("real_rf", round(e0, 6)), ("market_erp", round(e1 - e0, 6)),
+                ("idiosyncratic", round(e2 - e1, 6)), ("company_erp", round(e2 - e0, 6)),
+                ("real_coe", round(e2, 6)),
+            ], columns=["field", "value_decimal"]).to_csv(
+                f"{OUTDIR}/coe_v2_{ticker}_effective_annual.csv", index=False)
+            written += [f"coe_v2_{ticker}_effective.csv", f"coe_v2_{ticker}_effective_annual.csv"]
+
+            r1 = stock_vol_ts[0][1] / max(index_vol_ts[0][1], 1e-6)
+            print(f"  coe v2: R(front)={r1:.2f} cat={category} "
+                  f"stock_vol_pts={len(stock_vol_ts)} obs_to={stock_vol_ts[-1][0]:.2f}y "
+                  f"coe(1y)={coe2['real_coe'].loc[1]:.2f}% coe(100y)={coe2['real_coe'].loc[100]:.2f}%")
+            print(f"  coe v2 EFFECTIVE: real_coe={eff_coe:.2f}%  company_erp={eff_company:.2f}%  "
+                  f"(mkt={eff_mkt:.2f} + idio={eff_idio:.2f}) over rf={eff_rf:.2f}%")
+    except Exception as e:
+        print(f"  coe v2 skipped (non-fatal): {e}")
+
     # archive the exact bonds this run used (audit trail; no manual tab-keeping)
     if bonds is not None:
         bonds.to_csv(f"{OUTDIR}/bonds_used_{ticker}.csv", index=False)

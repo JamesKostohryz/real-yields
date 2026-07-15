@@ -184,6 +184,36 @@ def main():
         eg_ann = eg.copy()
         eg_ann["market_erp"] = units.to_decimal(eg_ann["market_erp"])
         eg_ann[["market_erp"]].round(6).to_csv(f"{OUTDIR}/erp_market_latest_annual.csv")
+
+        # --- v2 (non-breaking): market ERP from the VIX TERM STRUCTURE, blended to
+        # the bond floor over 5-30y, published to 150y. New files only; the existing
+        # erp_market_latest.csv above is untouched until the engine cuts over. ---
+        try:
+            from . import volsurface as vs
+            GRID_V2 = np.arange(1, 151, dtype=float)
+            # short-end VIX term structure: FRED (VIX 30d, VIX3M) + CBOE (9d, 6m, 1y)
+            vols = vs.fetch_fred_vols(key, ds.fetch_fred_latest)   # reliable base
+            vols.update(vs.fetch_cboe_vols())                      # best-effort term structure
+            # long-dated extension: SPX/SPY LEAPS to ~3y, then a best-effort CME hook.
+            # This is the "futures options" reach that keeps the ERP options-driven past 1y.
+            extra_ts = list(vs.fetch_index_vol_ts_yf())
+            extra_ts += list(vs.fetch_cme_settlement_vols())
+            floor_v2 = vs.floor_from_credit_grid(cg, wedge=1.0)
+            me2, vol_ts = vs.build_v2_market_erp(GRID_V2, vols, floor_v2,
+                                                 converge_year=30.0, extra_ts=extra_ts)
+            me2.round(4).to_csv(f"{OUTDIR}/market_erp_v2_latest.csv")
+            me2a = me2.copy(); me2a["market_erp"] = units.to_decimal(me2a["market_erp"])
+            me2a.round(6).to_csv(f"{OUTDIR}/market_erp_v2_latest_annual.csv")
+            # publish the exact vol term structure that fed the ERP (audit + the Sheet)
+            pd.DataFrame(vol_ts, columns=["tenor", "index_vol"]).round(3).to_csv(
+                f"{OUTDIR}/index_vol_ts_latest.csv", index=False)
+            obs_max = max(t for t, _ in vol_ts)
+            print(f"market ERP v2 written: {len(vol_ts)} vol pts (obs to {obs_max:.2f}y; "
+                  f"short={sorted(vols)}, long={len(extra_ts)}), floor={floor_v2:.2f}%, "
+                  f"1y={me2['market_erp'].loc[1]:.2f} 5y={me2['market_erp'].loc[5]:.2f} "
+                  f"30y={me2['market_erp'].loc[30]:.2f}")
+        except Exception as e:
+            print(f"market ERP v2 skipped (non-fatal): {e}")
     except Exception as e:
         print(f"credit/erp grid skipped (non-fatal): {e}")
 

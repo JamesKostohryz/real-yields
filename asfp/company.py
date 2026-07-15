@@ -105,9 +105,43 @@ def fetch_company(ticker, avg_correlation=0.35):
         equity_vol = iv or rv or 0.25
     sigma_V = asset_vol_from_equity(equity_vol, lev["L"])
 
+    # v2: the single-name option-implied vol TERM STRUCTURE (1m..2y) that the
+    # risk ratio R_i(t) needs at the front. Falls back to the flat 1y point (as a
+    # single-element curve) when the long-dated chain is thin. In vol POINTS.
+    equity_vol_ts = fetch_equity_vol_ts(tk, price, fallback_vol=equity_vol)
+
     return dict(ticker=ticker, price=price, **lev,
                 equity_vol=equity_vol, sigma_V=sigma_V,
+                equity_vol_ts=equity_vol_ts,
                 avg_correlation=avg_correlation)
+
+
+# tenors (calendar days) at which we sample the single-name IV term structure
+EQUITY_TS_DAYS = (30, 90, 182, 365, 545, 730)
+
+
+def fetch_equity_vol_ts(tk, price, days_list=EQUITY_TS_DAYS, fallback_vol=None):
+    """Single-name ATM implied-vol TERM STRUCTURE: [(years, vol_points), …].
+
+    Samples the option chain at several target horizons (default 1m..2y), taking a
+    robust near-the-money ATM IV at each (via `_atm_iv`). Points that come back
+    empty/implausible are dropped. Returns vol in POINTS (e.g. 27.5 = 27.5%), sorted
+    by tenor. If nothing survives, returns a single flat point at 1y from
+    `fallback_vol` (the realized-vol-hardened equity_vol) so the caller always has a
+    usable curve. Runs on the CI runner (needs yfinance); wrapped non-fatally."""
+    out = []
+    for d in days_list:
+        try:
+            iv = _atm_iv(tk, price, target_days=int(d))
+        except Exception:
+            iv = None
+        if iv is not None and 0.05 <= iv <= 2.0:
+            out.append((round(d / 365.0, 4), round(iv * 100.0, 3)))
+    out.sort()
+    if not out:
+        fv = fallback_vol if (fallback_vol and 0.05 <= fallback_vol <= 2.0) else 0.25
+        out = [(1.0, round(fv * 100.0, 3))]
+    return out
 
 
 def _atm_iv(tk, price, target_days=365, band=(0.02, 3.0), window=0.15, n=4):
@@ -157,3 +191,41 @@ def _realized_vol(tk, lookback="1y"):
         return float(rets.std() * np.sqrt(252.0))
     except Exception:
         return None
+
+
+# a broad, liquid large-cap basket standing in for "the average stock" — used to
+# MEASURE the average single-stock variance (Martin-Wagner) instead of assuming it.
+DEFAULT_BASKET = [
+    "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "AVGO", "TSLA",
+    "JPM", "BAC", "GS", "V", "MA", "JNJ", "UNH", "PFE", "MRK", "ABBV",
+    "PG", "KO", "PEP", "WMT", "MCD", "HD", "NKE", "COST",
+    "CAT", "BA", "HON", "GE", "XOM", "CVX", "DIS", "VZ", "ORCL", "CSCO",
+]
+
+
+def basket_avg_variance(tickers=None, min_names=12, default_vol=0.30):
+    """Average risk-neutral variance of a large-cap basket — the 'average stock'
+    variance for the idiosyncratic term. Per name: ~1y ATM implied vol (realized-vol
+    fallback), robust to individual failures. Returns (avg_variance, n_used).
+    Falls back to default_vol**2 if too few names succeed."""
+    import time
+    import yfinance as yf
+    tickers = tickers or DEFAULT_BASKET
+    variances = []
+    for t in tickers:
+        try:
+            tk = yf.Ticker(t)
+            fast = tk.fast_info
+            price = float(fast.get("last_price") or fast.get("lastPrice") or 0.0)
+            if price <= 0:
+                continue
+            iv = _atm_iv(tk, price, target_days=365)
+            v = iv if (iv is not None and 0.05 <= iv <= 2.0) else _realized_vol(tk)
+            if v is not None and 0.05 <= v <= 2.0:
+                variances.append(v ** 2)
+        except Exception:
+            pass
+        time.sleep(0.3)                       # gentle on Yahoo's rate limits
+    if len(variances) >= min_names:
+        return float(np.mean(variances)), len(variances)
+    return float(default_vol ** 2), len(variances)

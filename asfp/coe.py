@@ -61,3 +61,14 @@ def idio_anchor_from_options(equity_vol, vix, avg_correlation=0.35):
     avg_stock_var = market_var / max(avg_correlation, 1e-3)
     idio = 0.5 * (equity_var - avg_stock_var)
     return max(idio, 0.0) * 100.0        # decimal variance -> percent premium
+
+
+def idio_anchor_from_variance(equity_vol, avg_stock_var):
+    """Martin-Wagner idiosyncratic premium (%) using the MEASURED average-stock
+    variance (a live basket average) instead of the fixed-correlation proxy:
+        ½ * (stock's own variance - the average stock's variance), floored at 0.
+    equity_vol is decimal (0.22); avg_stock_var is decimal variance (0.09 = 30% vol).
+    """
+    equity_var = float(equity_vol) ** 2
+    idio = 0.5 * (equity_var - float(avg_stock_var))
+    return max(idio, 0.0) * 100.0
