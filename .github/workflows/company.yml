@@ -7,6 +7,16 @@ on:
         description: "Ticker (leave blank to use the TICKER cell in the bonds sheet)"
         required: false
         default: ""
+      obs_category:
+        description: "Obsolescence durability (A=durable, B=moderate, C=exposed)"
+        required: false
+        type: choice
+        default: "B"
+        options: ["A", "B", "C"]
+      ory_override:
+        description: "Obsolescence Risk Year override (optional; blank = use the category default)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -31,13 +41,6 @@ jobs:
       - name: Pull company data
         env:
           TICKER: "${{ github.event.inputs.ticker }}"
+          OBS_CATEGORY: "${{ github.event.inputs.obs_category }}"
+          ORY_OVERRIDE: "${{ github.event.inputs.ory_override }}"
         run: python -m asfp.run_company
-
-      - name: Commit
-        run: |
-          git config user.name "asfp-bot"
-          git config user.email "asfp-bot@users.noreply.github.com"
-          git add outputs/
-          git commit -m "company data update" || echo "no changes"
-          git pull --rebase --autostash origin main || true
-          git push
