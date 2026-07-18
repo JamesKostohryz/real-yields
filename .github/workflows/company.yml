@@ -21,8 +21,11 @@ on:
 permissions:
   contents: write
 
-env:
-  BONDS_SHEET_ID: "1KnbQFHWFXhZZ7Fy2rB1KplWT3GYblNlIEWDh7BzLOC4"
+# NOTE: BONDS_SHEET_ID was removed on purpose. With it gone, run_company reads the
+# committed bonds/<TICKER>.csv file — which the new "Refresh bonds from EODHD" step
+# regenerates automatically. That is what retires the manual TradingView paste.
+# (If you ever want to hand-edit a company's bonds again, drop a bonds/<T>.csv in
+#  the repo; any ticker NOT in refresh_bonds.py is left exactly as committed.)
 
 jobs:
   build:
@@ -37,6 +40,15 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # NEW: pull this issuer's bonds straight from EODHD and rewrite
+      # bonds/<TICKER>.csv. Safe no-op for tickers not configured in
+      # refresh_bonds.py or if the key/ticker is missing.
+      - name: Refresh bonds from EODHD
+        env:
+          EODHD_API_KEY: ${{ secrets.EODHD_API_KEY }}
+          TICKER: "${{ github.event.inputs.ticker }}"
+        run: python refresh_bonds.py
+
       - name: Pull company data
         env:
           TICKER: "${{ github.event.inputs.ticker }}"
@@ -48,7 +60,7 @@ jobs:
         run: |
           git config user.name "asfp-bot"
           git config user.email "asfp-bot@users.noreply.github.com"
-          git add outputs/
+          git add outputs/ bonds/
           git commit -m "company data update" || echo "no changes"
           git pull --rebase --autostash origin main || true
           git push
