@@ -35,9 +35,44 @@ DEFAULT_R_DISTRESS = 6.0        # risk ratio of a near-death firm (~110% vol / ~
 
 
 def martin_pct(vol_points):
-    """Martin ERP (percent) from an implied vol in vol points: ERP ≈ variance."""
+    """Martin ERP (percent) from an implied vol in vol points: ERP ≈ variance.
+
+    NOTE this is a SPOT / cumulative measure: an implied vol σ(T) describes the
+    AVERAGE variance over [0,T], so martin(σ(T)) is the average ERP to horizon T,
+    not the marginal ERP earned in year T. Use forward_erp() to get the per-year
+    (marginal) premium the term-structure model actually discounts with."""
     v = np.asarray(vol_points, dtype=float)
     return v * v / 100.0
+
+
+def forward_erp(grid, spot_erp):
+    """Convert a SPOT ERP term structure into the FORWARD (marginal) ERP per year.
+
+    A T-year implied vol prices the *cumulative* variance over [0,T] — like a 2-year
+    option premium covering both years. The premium attributable to year T alone is
+    the marginal (forward) variance, exactly analogous to a one-year forward rate on
+    a yield curve:
+
+        cumulative variance to t :  C(t) = spot_erp(t) · t
+        forward ERP in year t    :  f(t) = [C(t) − C(t−1)] / Δt          (f(1)=spot(1))
+
+    So the pieces telescope: Σ_{s≤t} f(s) = spot_erp(t) · t. This is the object the
+    COE model must use, because the risk-free leg is a one-year forward (real_fwd1y)
+    and cash flows are discounted year-by-year — the ERP for each year must likewise
+    be that year's marginal premium, not the average-to-date. Floored at 0 (a period's
+    variance cannot be negative), which also tames a downward vol kink at the front.
+
+    On a rising vol curve the forward sits ABOVE the spot (later years cost more on the
+    margin); on a falling/backwardated curve it sits BELOW (the "second year is cheaper"
+    case) — both handled correctly."""
+    grid = np.asarray(grid, dtype=float)
+    spot = np.asarray(spot_erp, dtype=float)
+    cum = spot * grid                                   # cumulative variance to each tenor
+    fwd = np.empty_like(cum)
+    fwd[0] = spot[0]                                    # year-1 forward == spot(1)
+    dt = np.diff(grid)
+    fwd[1:] = (cum[1:] - cum[:-1]) / np.where(dt == 0, 1.0, dt)
+    return np.maximum(fwd, 0.0)
 
 
 def _interp_ts(grid, ts):
@@ -55,7 +90,7 @@ def build_market_erp_curve(grid, index_vol_ts, floor, glide_half_life=5.0):
     e.g. [(0.08,17),(0.25,18.5),(0.5,19.5),(1,20),(3,21),(5,21.5)]."""
     grid = np.asarray(grid, float)
     vol, obs_max = _interp_ts(grid, index_vol_ts)
-    erp_obs = martin_pct(vol)
+    erp_obs = forward_erp(grid, martin_pct(vol))        # marginal (per-year) ERP, not spot
     erp_at_max = float(np.interp(obs_max, grid, erp_obs))
     out = np.where(
         grid <= obs_max,
@@ -74,7 +109,7 @@ def build_market_erp_blended(grid, index_vol_ts, floor, converge_year=30.0):
     """
     grid = np.asarray(grid, float)
     vol, obs_max = _interp_ts(grid, index_vol_ts)
-    erp_obs = martin_pct(vol)
+    erp_obs = forward_erp(grid, martin_pct(vol))        # marginal (per-year) ERP, not spot
     e5 = float(np.interp(obs_max, grid, erp_obs))
     out = np.empty_like(grid)
     span = max(converge_year - obs_max, 1e-6)

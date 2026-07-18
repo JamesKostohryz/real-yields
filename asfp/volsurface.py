@@ -121,21 +121,17 @@ def fetch_index_vol_ts_yf(days_list=INDEX_TS_DAYS, symbols=("^SPX", "SPY"), time
     return []
 
 
-def fetch_cme_settlement_vols(timeout=15):
-    """Best-effort CME E-mini S&P (ES) option settlement ATM IV at long tenors — the
-    furthest-out 'futures options' point (quarterly expiries to ~5y). Returns
-    [(years, vol_points), …] or [] if unreachable / the endpoint shape has drifted.
-
-    CME's public settlement surface is not a stable documented CSV, so this is a HOOK:
-    it is wrapped non-fatally and the pipeline is fully functional without it (the
-    yfinance SPX/SPY LEAPS above already extend the observed front to ~3y). Fill in the
-    concrete product/endpoint here when a reliable free source is confirmed on the
-    runner; until then it simply returns [] and the model degrades gracefully."""
+def fetch_cme_settlement_vols(disc_rate_pct=4.5, timeout=20, log=print):
+    """Long-dated ATM implied vols from CME ES option settlements (quarterly expiries to
+    ~5y), extending the observed front past the ~3y LEAPS reach. Returns
+    [(years, vol_points), …] or [] on any failure. Delegates to asfp.cme, which is
+    heavily logged and hard-validated so a wrong endpoint/format degrades safely."""
     try:
-        # placeholder: no confirmed free programmatic ES-options settlement feed.
-        # Intentionally returns [] rather than scraping an unverified endpoint.
-        return []
-    except Exception:
+        from . import cme
+        return cme.fetch_cme_settlement_vols(disc_rate_pct=disc_rate_pct,
+                                             timeout=timeout, log=log)
+    except Exception as e:
+        log(f"  cme: skipped (non-fatal): {e}")
         return []
 
 

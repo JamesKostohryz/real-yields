@@ -217,6 +217,52 @@ def main():
     except Exception as e:
         print(f"credit/erp grid skipped (non-fatal): {e}")
 
+    # --- non-fatal DIAGNOSTIC: index skew-priced ERP (corridor down/up variance).
+    # Pure measurement written to a new file; nothing in the model consumes it yet. ---
+    try:
+        from . import company as comp
+        d = comp.skew_diag("SPY")                       # index proxy
+        if d:
+            pd.DataFrame([{
+                "security": "SPY", "atm_vol": round(d["atm"] * 100, 2),
+                "k_down_var": round(d["k_down"] * 100, 3), "k_up_var": round(d["k_up"] * 100, 3),
+                "k_var_total": round(d["k_var"] * 100, 3),
+                "skew_erp": round(d["skew"] * 100, 3),
+                "variance_erp": round(d["atm"] ** 2 * 100, 3), "n_strikes": d["n"],
+            }]).to_csv(f"{OUTDIR}/market_skew_diag.csv", index=False)
+            print(f"skew diag SPY: skew_erp={d['skew']*100:.2f}% "
+                  f"variance_erp={d['atm']**2*100:.2f}% (down={d['k_down']*100:.2f} "
+                  f"up={d['k_up']*100:.2f}, n={d['n']})")
+    except Exception as e:
+        print(f"skew diagnostic skipped (non-fatal): {e}")
+
+    # --- non-fatal: SKEW-PRICED ERP term structure for the index (final engine).
+    # Corridor down/up-variance off the SPY smiles, per-year, phi=1 (full option-implied
+    # skew). New file; nothing consumes it yet — lets us see the real curve. ---
+    try:
+        from . import company as comp, erp_engine as ee
+        import yfinance as _yf
+        _tk = _yf.Ticker("SPY"); _fi = _tk.fast_info
+        _px = float(_fi.get("last_price") or _fi.get("lastPrice") or 0.0)
+        smiles = comp.fetch_smiles(_tk, _px) if _px > 0 else {}
+        if len(smiles) >= 2:
+            GS = np.arange(1, 31, dtype=float)
+            curve = ee.skew_erp_curve(smiles, GS, phi=1.0)
+            curve.round(4).to_csv(f"{OUTDIR}/market_skew_erp.csv")
+            eff = ee.effective_erp(curve)
+            rs = comp.realized_skew("^GSPC")           # physical skew for the phi dial
+            phi_est = (rs["corridor"] / (curve["corridor_skew"].mean())
+                       if rs and curve["corridor_skew"].mean() > 1e-6 else None)
+            if rs:
+                pd.DataFrame([{"field": k, "value": v} for k, v in rs.items()]
+                             + [{"field": "phi_estimate", "value": round(phi_est, 3) if phi_est else None}]
+                             ).to_csv(f"{OUTDIR}/market_skew_realized.csv", index=False)
+            print(f"skew-ERP (index): tenors={sorted(smiles)} eff={eff:.2f}% "
+                  f"1y={curve['erp'].loc[1]:.2f} 5y={curve['erp'].loc[5]:.2f}"
+                  + (f"  phi_est={phi_est:.2f}" if phi_est else ""))
+    except Exception as e:
+        print(f"skew-ERP (index) skipped (non-fatal): {e}")
+
     # --- non-fatal: measured average-stock variance (idiosyncratic term input) ---
     # replaces the fixed-correlation assumption with a live large-cap basket average.
     try:

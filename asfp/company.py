@@ -54,6 +54,19 @@ def asset_vol_from_equity(equity_vol, L):
     return equity_vol * (1.0 - L)
 
 
+def pick_equity_vol(iv, rv, lo=0.05, hi=2.0, default=0.25):
+    """Choose the equity vol from an option-implied read `iv` and a realized read `rv`,
+    guarding hard against degenerate quotes. Prefer a plausible IV; else a plausible
+    realized vol; else a sane default. A near-zero/stale quote (e.g. 0.2%) or an
+    implausibly high one is NEVER selected — that would collapse the risk ratio to 1
+    and silently zero out the idiosyncratic premium."""
+    if iv is not None and lo <= iv <= hi:
+        return float(iv)
+    if rv is not None and lo <= rv <= hi:
+        return float(rv)
+    return float(default)
+
+
 def idiosyncratic_variance(equity_var, market_var, avg_correlation):
     """Firm-specific variance the market can't diversify away.
     Martin–Wagner: the stock's own risk-neutral variance minus the average
@@ -97,12 +110,7 @@ def fetch_company(ticker, avg_correlation=0.35):
     # quotes that come back zero — e.g. a liquid name reading ~0% by mistake).
     iv = _atm_iv(tk, price, target_days=365)
     rv = _realized_vol(tk)
-    if iv is not None and 0.05 <= iv <= 2.0:
-        equity_vol = iv
-    elif rv is not None:
-        equity_vol = rv
-    else:
-        equity_vol = iv or rv or 0.25
+    equity_vol = pick_equity_vol(iv, rv)
     sigma_V = asset_vol_from_equity(equity_vol, lev["L"])
 
     # v2: the single-name option-implied vol TERM STRUCTURE (1m..2y) that the
@@ -114,6 +122,103 @@ def fetch_company(ticker, avg_correlation=0.35):
                 equity_vol=equity_vol, sigma_V=sigma_V,
                 equity_vol_ts=equity_vol_ts,
                 avg_correlation=avg_correlation)
+
+
+def fetch_smile(tk, price, target_days=365, band=(0.70, 1.30)):
+    """OTM implied-vol SMILE around the money for the expiry nearest `target_days`:
+    (strikes_ascending, ivs_decimal, forward≈price) or None. Puts below the forward,
+    calls above (the OTM side each), filtered to `band` moneyness and plausible IV.
+    Used by the skew diagnostic; best-effort, CI-runner only."""
+    import datetime as _dt
+    try:
+        exps = tk.options
+    except Exception:
+        return None
+    if not exps:
+        return None
+    exp = min(exps, key=lambda e: abs((_dt.date.fromisoformat(e) - _dt.date.today()).days - target_days))
+    try:
+        chain = tk.option_chain(exp)
+    except Exception:
+        return None
+    F = float(price)
+    lo, hi = band[0] * F, band[1] * F
+    pts = {}
+    for leg, side in ((chain.puts, "p"), (chain.calls, "c")):
+        try:
+            leg = leg.dropna(subset=["impliedVolatility"])
+        except Exception:
+            continue
+        for K, iv in zip(leg["strike"].astype(float), leg["impliedVolatility"].astype(float)):
+            if not (0.03 <= iv <= 2.0):
+                continue
+            if side == "p" and lo <= K < F:
+                pts[float(K)] = float(iv)              # OTM put
+            elif side == "c" and F <= K <= hi:
+                pts.setdefault(float(K), float(iv))    # OTM call
+    if len(pts) < 5:
+        return None
+    ks = sorted(pts)
+    return ks, [pts[k] for k in ks], F
+
+
+def fetch_smiles(tk, price, days_list=(182, 365, 730, 1095, 1825), band=(0.60, 1.50)):
+    """Multi-tenor option SMILES for the skew-ERP engine: {tenor_years: (strikes, ivs, F)}
+    at each horizon in `days_list` for which a plausible smile exists. Single names usually
+    reach ~1-2y; the index (SPX/SPY LEAPS + CME) reaches ~3-5y. Skips tenors with no chain."""
+    out = {}
+    for d in days_list:
+        sm = fetch_smile(tk, price, target_days=int(d), band=band)
+        if sm:
+            out[round(d / 365.0, 4)] = sm
+    return out
+
+
+def realized_skew(ticker, lookback_years=15):
+    """Physical (realized) skew for the φ dial: annualized down-semivariance minus
+    up-semivariance of monthly log returns, in percent — the realized analog of the
+    option-implied corridor. Returns dict(down, up, corridor, n) in percent variance, or
+    None. φ ≈ realized_corridor / implied_corridor, estimated per name on the runner."""
+    import yfinance as yf
+    try:
+        h = yf.Ticker(ticker).history(period=f"{int(lookback_years)}y", interval="1mo")
+        c = h["Close"].dropna()
+        if len(c) < 36:
+            return None
+        r = np.log(c / c.shift(1)).dropna().to_numpy()
+    except Exception:
+        return None
+    mu = float(np.mean(r))
+    dn = r[r < mu] - mu
+    up = r[r >= mu] - mu
+    # semivariances, annualized (×12 for monthly), in percent
+    down = float(np.sum(dn * dn) / len(r) * 12.0 * 100.0)
+    upv = float(np.sum(up * up) / len(r) * 12.0 * 100.0)
+    return {"down": round(down, 3), "up": round(upv, 3),
+            "corridor": round(down - upv, 3), "n": len(r)}
+
+
+def skew_diag(ticker, target_days=365):
+    """Skew diagnostic for one ticker: pull the smile, run the corridor down/up variance
+    split, return dict(ticker, atm, k_down, k_up, k_var, skew, n) in annual variance, or
+    None. Non-breaking — pure measurement, nothing in the model depends on it."""
+    import yfinance as yf
+    from . import skew as sk
+    tk = yf.Ticker(ticker)
+    try:
+        fast = tk.fast_info
+        price = float(fast.get("last_price") or fast.get("lastPrice") or 0.0)
+    except Exception:
+        price = 0.0
+    if price <= 0:
+        return None
+    sm = fetch_smile(tk, price, target_days)
+    if not sm:
+        return None
+    ks, ivs, F = sm
+    d = sk.skew_price(ks, ivs, F, target_days / 365.0)
+    d.update(ticker=ticker, atm=float(np.interp(F, ks, ivs)), n=len(ks))
+    return d
 
 
 # tenors (calendar days) at which we sample the single-name IV term structure

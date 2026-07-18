@@ -137,10 +137,17 @@ def main():
 
             # single-name option-implied vol TERM STRUCTURE (1m..2y); flat 1y fallback
             stock_vol_ts = fund.get("equity_vol_ts") or [(1.0, float(fund.get("equity_vol", 0.25)) * 100.0)]
-            # index vol term structure implied by the market ERP via Martin (variance = ERP),
-            # sampled at the SAME tenors as the stock so R = σ_i/σ_mkt aligns tenor-by-tenor.
-            index_vol_ts = [(t, float(np.sqrt(max(np.interp(t, GV, mkt2), 0.01) * 100.0)))
-                            for t, _ in stock_vol_ts]
+            # index vol term structure for the risk ratio R = σ_i/σ_mkt: use the OBSERVED
+            # (spot) index vols the weekly job published, so R is a clean vol ratio. (Do NOT
+            # invert the market ERP here — it is now a FORWARD/marginal variance, so its
+            # implied vol is a forward vol and would mismatch the stock's spot vols.)
+            ivp = f"{OUTDIR}/index_vol_ts_latest.csv"
+            if os.path.exists(ivp):
+                _iv = pd.read_csv(ivp)
+                index_vol_ts = list(zip(_iv["tenor"].astype(float).tolist(),
+                                        _iv["index_vol"].astype(float).tolist()))
+            else:   # degraded fallback: flat 1y index vol from the front market ERP (spot approx)
+                index_vol_ts = [(1.0, float(np.sqrt(max(np.interp(1.0, GV, mkt2), 0.01) * 100.0)))]
             category = os.environ.get("OBS_CATEGORY", "B").strip().upper()[:1] or "B"  # Phase 4: from sheet
             ory_ov = os.environ.get("ORY_OVERRIDE")
             ory_ov = float(ory_ov) if ory_ov else None
@@ -198,6 +205,57 @@ def main():
                   f"(mkt={eff_mkt:.2f} + idio={eff_idio:.2f}) over rf={eff_rf:.2f}%")
     except Exception as e:
         print(f"  coe v2 skipped (non-fatal): {e}")
+
+    # --- non-fatal DIAGNOSTIC: skew-priced ERP for this name vs the index, next to the
+    # current variance-based number. Pure measurement; nothing consumes it. Lets us see
+    # real skew results before deciding whether to adopt the approach. ---
+    try:
+        from . import company as comp
+        dn = comp.skew_diag(ticker)
+        if dn:
+            var_erp = dn["atm"] ** 2 * 100                       # Martin(ATM), name's own
+            mkt_skew = None
+            msp = f"{OUTDIR}/market_skew_diag.csv"
+            if os.path.exists(msp):
+                mkt_skew = float(pd.read_csv(msp)["skew_erp"].iloc[0])
+            row = {"ticker": ticker, "atm_vol": round(dn["atm"] * 100, 2),
+                   "k_down_var": round(dn["k_down"] * 100, 3), "k_up_var": round(dn["k_up"] * 100, 3),
+                   "skew_erp": round(dn["skew"] * 100, 3),
+                   "variance_erp_ownvol": round(var_erp, 3),
+                   "market_skew_erp": mkt_skew, "n_strikes": dn["n"]}
+            pd.DataFrame([row]).to_csv(f"{OUTDIR}/skew_diag_{ticker}.csv", index=False)
+            written.append(f"skew_diag_{ticker}.csv")
+            mk = f" mkt_skew={mkt_skew:.2f}%" if mkt_skew is not None else ""
+            print(f"  SKEW DIAG {ticker}: skew_erp={dn['skew']*100:.2f}%  "
+                  f"variance_erp(ownvol)={var_erp:.2f}%  "
+                  f"(down={dn['k_down']*100:.2f} up={dn['k_up']*100:.2f}, n={dn['n']}){mk}")
+    except Exception as e:
+        print(f"  skew diagnostic skipped (non-fatal): {e}")
+
+    # --- non-fatal: SKEW-PRICED ERP term structure for this name (final engine).
+    # Corridor off the name's own multi-tenor smiles; single names compress vs the index. ---
+    try:
+        from . import company as comp, erp_engine as ee
+        import yfinance as _yf
+        _tk = _yf.Ticker(ticker); _fi = _tk.fast_info
+        _px = float(_fi.get("last_price") or _fi.get("lastPrice") or 0.0)
+        smiles = comp.fetch_smiles(_tk, _px) if _px > 0 else {}
+        if len(smiles) >= 2:
+            GS = np.arange(1, 31, dtype=float)
+            curve = ee.skew_erp_curve(smiles, GS, phi=1.0)
+            curve.round(4).to_csv(f"{OUTDIR}/skew_erp_{ticker}.csv")
+            written.append(f"skew_erp_{ticker}.csv")
+            eff = ee.effective_erp(curve)
+            rs = comp.realized_skew(ticker)
+            if rs:
+                pd.DataFrame([{"field": k, "value": v} for k, v in rs.items()]
+                             ).to_csv(f"{OUTDIR}/skew_erp_{ticker}_realized.csv", index=False)
+                written.append(f"skew_erp_{ticker}_realized.csv")
+            print(f"  skew-ERP {ticker}: tenors={sorted(smiles)} eff={eff:.2f}% "
+                  f"1y={curve['erp'].loc[1]:.2f} 5y={curve['erp'].loc[5]:.2f}"
+                  + (f"  realized_corridor={rs['corridor']:.2f}" if rs else ""))
+    except Exception as e:
+        print(f"  skew-ERP {ticker} skipped (non-fatal): {e}")
 
     # archive the exact bonds this run used (audit trail; no manual tab-keeping)
     if bonds is not None:
