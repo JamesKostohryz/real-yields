@@ -1,46 +1,42 @@
 #!/usr/bin/env python3
 """
-refresh_bonds.py
+refresh_bonds.py  (v2 — GENERIC, no per-company list)
 ====================================================================
-Regenerate  bonds/<TICKER>.csv  automatically from the EODHD API,
-in the EXACT 10-column TradingView format the existing pipeline
-(asfp/debt_analytics.parse_tradingview_bonds) already reads.
+Regenerate  bonds/<TICKER>.csv  automatically from the EODHD API for
+*ANY* US ticker — no hand-maintained list of company names, ever.
+You never touch the repo to add a company; you just give it a ticker.
 
-This RETIRES the manual TradingView copy-paste. Nothing downstream
-changes: run_company.py still reads bonds/<T>.csv, fits the modal
-rating + multiplicative offset, and writes cod_<T>_annual.csv exactly
-as before — it just now reads a file that refreshed itself.
+How it identifies "this company's own bonds" automatically:
+  Every US security's ISIN embeds its issuer's 6-character CUSIP
+  (ISIN chars 3-8).  The stock and that issuer's bonds share it:
+      AT&T stock  US00206R1023  -> CUSIP6 00206R -> AT&T bonds US00206R…
+      Coca-Cola   US1912161007  -> CUSIP6 191216 -> KO bonds   US191216…
+      (Coca-Cola FEMSA is 191241 — a DIFFERENT company — auto-excluded)
+  So we resolve the ticker to its stock ISIN, take that CUSIP6, and keep
+  only the bonds that share it.  Precise, and impossible to pollute with
+  a same-named but different issuer.
 
-It also does one thing the manual paste never did reliably: it drops
-the spun-off media debt (Time Warner / DIRECTV / AOL / WarnerMedia)
-BY NAME, so AT&T's credit curve is fit only on AT&T's own obligations
-instead of leaning on a statistical outlier filter to remove them.
+Pipeline per ticker:
+  1. resolve <TICKER> -> the US-listed stock's name + ISIN (EODHD Search),
+  2. CUSIP6 = the issuer prefix of that ISIN,
+  3. search bonds by the company's core name (a wide net),
+  4. keep USD bonds whose ISIN shares CUSIP6, with a coupon + maturity in
+     the name, and a live yield,
+  5. robust MEDIAN of recent daily yields per bond (matrix-priced, noisy),
+  6. write bonds/<TICKER>.csv in the 10-column TradingView format the
+     existing pipeline already reads — nothing downstream changes.
 
-Pipeline per issuer:
-  1. enumerate the issuer's USD bonds from EODHD Search (no hand list),
-  2. keep only the family's own debt (include / exclude name rules),
-  3. pull each bond's recent yield-to-worst + price (robust MEDIAN of
-     the last few daily prints — these bonds are matrix-priced so a
-     single tick is noisy),
-  4. read coupon + maturity out of the bond name,
-  5. write bonds/<TICKER>.csv in the 10-column format.
+Fallback: if the CUSIP6 match is thin (issuer floats debt under a finance
+subsidiary with its own CUSIP), it falls back to core-name matching on the
+bond descriptions (still avoiding same-name-different-company via the core
+name). Either way it refuses to overwrite the file with < MIN_BONDS bonds.
 
-Columns written (matched to parse_tradingview_bonds, which reads by
-name-prefix and is unit-agnostic via its _num/parse_amount helpers):
-  Symbol, YTW %, Price %, Coupon %, Maturity date, Outstanding amt,
-  Face value, S&P rating, Fitch rating, Issuer
-  - YTW %, Price %, Coupon % are DECIMAL FRACTIONS (4.35% -> 0.0435),
-    matching the existing committed files.
-  - S&P rating is set to the issuer's configured rating so the
-    downstream modal-rating picks it up (EODHD Search carries no
-    per-bond rating).
-  - Outstanding amt is left blank (EODHD Search carries no amount);
-    the cost-of-debt fit does not use it, and portfolio_summary
-    tolerates the blank (headline market-value-of-debt just reads nan).
+OPTIONAL overrides (only if you ever want to force extra issuer CUSIP6s in,
+e.g. legacy subsidiaries): add them to EXTRA_CUSIP6 below. Default: none.
 
-Runs headless in GitHub Actions. stdlib + (optional) nothing else.
-EODHD key from env EODHD_API_KEY (a GitHub Actions secret). NEVER
-committed. Self-test:  python refresh_bonds.py --self-test  (no key).
+Runs headless in GitHub Actions. stdlib only. EODHD key from env
+EODHD_API_KEY (a GitHub Actions secret) — NEVER committed.
+Self-test:  python refresh_bonds.py --self-test   (no key, no network)
 ====================================================================
 """
 import os
@@ -56,24 +52,12 @@ from urllib.parse import quote
 EODHD_BASE = "https://eodhd.com/api"
 YTW_WINDOW_DAYS = 7
 MIN_YEARS, MAX_YEARS = 0.4, 40.0
+MIN_BONDS = 4                      # refuse to write a thinner list than this
 
-# ---- issuer families -------------------------------------------------------
-ISSUERS = {
-    "T": {
-        "name": "AT&T Inc.",
-        "rating": "BBB",
-        "search_queries": ["AT&T", "BellSouth", "SBC Communications",
-                            "Ameritech", "Cingular"],
-        "include_substrings": ["AT&T", "AT & T", "BELLSOUTH", "SBC ",
-                               "SBC COMM", "AMERITECH", "CINGULAR",
-                               "PACIFIC BELL", "SOUTHWESTERN BELL"],
-        "exclude_substrings": ["TIME WARNER", "WARNERMEDIA", "WARNER MEDIA",
-                               "AOL", "DIRECTV", "DISCOVERY", "WBD",
-                               "WARNER BROS"],
-        "currency": "USD",
-    },
-    # add more issuers here, same shape.
-}
+# Only needed for special cases; maps TICKER -> list of extra CUSIP6 prefixes
+# to also treat as this issuer (e.g. {"T": ["001957"]} to add AT&T Corp /Old/).
+EXTRA_CUSIP6 = {}
+
 
 # ---- EODHD REST (thin; shapes proven against the live MCP server) ----------
 def _get_json(url):
@@ -81,9 +65,10 @@ def _get_json(url):
         return json.loads(r.read().decode("utf-8"))
 
 
-def eodhd_search_bonds(query, api_key, limit=500):
+def eodhd_search(query, api_key, bonds_only=False, limit=500):
+    b = "&bonds_only=1&type=bond" if bonds_only else ""
     url = (f"{EODHD_BASE}/search/{quote(query)}"
-           f"?api_token={api_key}&bonds_only=1&type=bond&limit={limit}&fmt=json")
+           f"?api_token={api_key}{b}&limit={limit}&fmt=json")
     try:
         data = _get_json(url)
     except Exception as e:                                   # noqa: BLE001
@@ -104,7 +89,52 @@ def eodhd_bond_prints(isin, api_key, days=YTW_WINDOW_DAYS):
     return rows if isinstance(rows, list) else []
 
 
-# ---- parsing / filtering ---------------------------------------------------
+# ---- resolve ticker -> (name, stock ISIN) ----------------------------------
+def resolve_issuer(ticker, api_key):
+    """Return (company_name, stock_isin) for the US listing of `ticker`."""
+    hits = eodhd_search(ticker, api_key, limit=50)
+    best = None
+    for h in hits:
+        code = str(h.get("Code", "")).upper()
+        exch = str(h.get("Exchange", "")).upper()
+        typ = str(h.get("Type", "")).lower()
+        isin = h.get("ISIN") or ""
+        if code == ticker.upper() and exch in ("US", "NYSE", "NASDAQ") \
+                and "stock" in typ and isin:
+            best = h
+            break
+        if best is None and code == ticker.upper() and isin:
+            best = h
+    if not best:
+        return None, None
+    return best.get("Name", ticker), (best.get("ISIN") or "")
+
+
+def cusip6_of(isin):
+    """Issuer CUSIP6 = ISIN chars 3-8 for a US ISIN ('US' + 9-char CUSIP + chk)."""
+    if isin and isin[:2].upper() == "US" and len(isin) >= 8:
+        return isin[2:8].upper()
+    return None
+
+
+# ---- name helpers ----------------------------------------------------------
+_SUFFIX = re.compile(
+    r"\b(inc|inc\.|incorporated|corp|corp\.|corporation|co|co\.|company|"
+    r"plc|ltd|ltd\.|llc|l\.l\.c\.|sa|s\.a\.|nv|n\.v\.|ag|holdings|holding|"
+    r"group|the)\b", re.I)
+
+
+def core_name(name):
+    """A wide-net search term: drop 'The', corporate suffixes, punctuation tails."""
+    n = re.sub(r"^the\s+", "", (name or "").strip(), flags=re.I)
+    n = _SUFFIX.sub("", n)
+    n = re.sub(r"[,/].*$", "", n)            # cut at first comma/slash
+    n = re.sub(r"\s+", " ", n).strip(" -&")
+    words = n.split()
+    return " ".join(words[:3]) if words else (name or "").strip()
+
+
+# ---- bond parsing ----------------------------------------------------------
 _MAT_RE = re.compile(r"(\d{1,2})([A-Za-z]{3})(\d{4})")
 _COUPON_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 _MONTHS = {m: i for i, m in enumerate(
@@ -132,17 +162,7 @@ def parse_coupon(name):
     return float(m.group(1)) / 100.0 if m else None
 
 
-def keep_bond(name, cfg):
-    up = (name or "").upper()
-    if any(x in up for x in cfg["exclude_substrings"]):
-        return False, "excluded (spun-off/unrelated)"
-    if not any(x in up for x in cfg["include_substrings"]):
-        return False, "no include match"
-    return True, "included"
-
-
 def robust_prints(rows):
-    """Return (median_ytw_frac, latest_price_frac, n) from recent daily rows."""
     ys, latest_price = [], None
     for r in rows:
         y = r.get("yield")
@@ -163,44 +183,69 @@ def robust_prints(rows):
     return statistics.median(ys) / 100.0, latest_price, len(ys)
 
 
-# ---- build the CSV ---------------------------------------------------------
+# ---- build ------------------------------------------------------------------
 BOND_COLS = ["Symbol", "YTW %", "Price %", "Coupon %", "Maturity date",
              "Outstanding amt", "Face value", "S&P rating", "Fitch rating",
              "Issuer"]
 
 
 def build_rows(ticker, api_key, as_of=None):
-    cfg = ISSUERS[ticker]
     as_of = as_of or _dt.date.today()
+    name, isin = resolve_issuer(ticker, api_key)
+    if not name:
+        raise RuntimeError(f"{ticker}: could not resolve to a US listing on EODHD")
+    c6 = cusip6_of(isin)
+    allow = {c6} if c6 else set()
+    allow |= set(EXTRA_CUSIP6.get(ticker.upper(), []))
+    print(f"  resolved {ticker} -> {name!r}  ISIN {isin or '?'}  CUSIP6 {c6 or '?'}")
 
-    seen, cands = set(), []
-    for q in cfg["search_queries"]:
-        for b in eodhd_search_bonds(q, api_key):
-            isin = b.get("ISIN") or b.get("Code")
-            if isin and isin not in seen:
-                seen.add(isin); cands.append(b)
-    print(f"  enumerated {len(cands)} candidate bonds")
+    cands = eodhd_search(core_name(name), api_key, bonds_only=True)
+    print(f"  search '{core_name(name)}' -> {len(cands)} candidate bonds")
 
-    rows, kept, dropped = [], 0, 0
+    def accept_issuer(bisin, bname):
+        if allow:
+            c = cusip6_of(bisin)
+            if c and c in allow:
+                return True
+        return False
+
+    # primary pass: CUSIP6 match
+    rows = _collect(cands, api_key, as_of, name, ticker, accept_issuer)
+    if len(rows) < MIN_BONDS:
+        # fallback: core-name-in-description match (still avoids other issuers)
+        core = core_name(name).upper()
+        print(f"  CUSIP6 match thin ({len(rows)}); falling back to name match on "
+              f"'{core}'")
+        rows = _collect(cands, api_key, as_of, name, ticker,
+                        lambda bi, bn: core in (bn or "").upper())
+    if len(rows) < MIN_BONDS:
+        raise RuntimeError(f"{ticker}: only {len(rows)} usable bonds — refusing to "
+                           f"overwrite bonds/{ticker}.csv")
+    rows.sort(key=lambda r: r["Maturity date"])
+    print(f"  kept {len(rows)} {ticker} bonds")
+    return rows
+
+
+def _collect(cands, api_key, as_of, issuer_name, ticker, accept):
+    rows = []
     for b in cands:
         name = b.get("Name", "") or ""
         isin = b.get("ISIN") or b.get("Code")
         ccy = b.get("Currency", "")
-        ok, _ = keep_bond(name, cfg)
-        if not ok:
-            dropped += 1; continue
-        if ccy and cfg["currency"] and ccy != cfg["currency"]:
-            dropped += 1; continue
+        if ccy and ccy != "USD":
+            continue
+        if not accept(isin, name):
+            continue
         mat = parse_maturity(name, as_of)
         coup = parse_coupon(name)
         if mat is None or coup is None:
-            dropped += 1; continue          # no maturity/coupon in name -> skip
+            continue
         yrs = (mat - as_of).days / 365.25
         if not (MIN_YEARS <= yrs <= MAX_YEARS):
-            dropped += 1; continue
+            continue
         ytw, price, n = robust_prints(eodhd_bond_prints(isin, api_key))
         if ytw is None:
-            dropped += 1; continue
+            continue
         rows.append({
             "Symbol": f"{isin} {name}".strip(),
             "YTW %": round(ytw, 6),
@@ -209,16 +254,11 @@ def build_rows(ticker, api_key, as_of=None):
             "Maturity date": mat.isoformat(),
             "Outstanding amt": "",
             "Face value": "1,000.00 USD",
-            "S&P rating": cfg["rating"],
+            "S&P rating": "",            # blank -> pipeline's modal rating -> BBB,
+                                         # then the bond-fitted offset corrects it
             "Fitch rating": "—",
-            "Issuer": cfg["name"],
+            "Issuer": issuer_name,
         })
-        kept += 1
-    print(f"  kept {kept} AT&T-family USD bonds, dropped {dropped}")
-    if kept < 3:
-        raise RuntimeError(f"{ticker}: only {kept} usable bonds — refusing to "
-                           f"overwrite bonds/{ticker}.csv with a thin list")
-    rows.sort(key=lambda r: r["Maturity date"])
     return rows
 
 
@@ -231,70 +271,121 @@ def write_bonds_csv(ticker, rows, bonds_dir="bonds"):
     return path
 
 
+def ticker_from_sheet():
+    """If BONDS_SHEET_ID is set, read the TICKER cell from the Cockpit sheet
+    (reusing the pipeline's own sheet reader). Empty string if unavailable."""
+    sid = os.environ.get("BONDS_SHEET_ID", "").strip()
+    if not sid:
+        return ""
+    try:
+        from asfp import sheets                       # same reader run_company uses
+        _, tk = sheets.bonds_and_ticker(sid)
+        return (tk or "").strip().upper()
+    except Exception as e:                            # noqa: BLE001
+        print(f"refresh_bonds: could not read ticker from the sheet: {e}")
+        return ""
+
+
 def main():
     if "--self-test" in sys.argv:
         return self_test()
+    # ticker precedence: explicit env/arg (workflow box) > the Cockpit sheet cell
     ticker = (os.environ.get("TICKER") or
               (sys.argv[1] if len(sys.argv) > 1 else "")).strip().upper()
-    # Graceful no-ops so this step is safe to run for ANY company job:
     if not ticker:
-        print("refresh_bonds: no TICKER given — skipping (nothing to refresh).")
-        return
-    if ticker not in ISSUERS:
-        print(f"refresh_bonds: {ticker} not configured for auto-refresh — "
-              f"leaving bonds/{ticker}.csv as-is.")
+        ticker = ticker_from_sheet()
+    if not ticker:
+        print("refresh_bonds: no TICKER (workflow box empty and no TICKER cell in "
+              "the sheet) — skipping.")
         return
     api_key = os.environ.get("EODHD_API_KEY")
     if not api_key:
-        print("refresh_bonds: EODHD_API_KEY not set — skipping refresh, "
-              "leaving the committed bond file as-is.")
+        print("refresh_bonds: EODHD_API_KEY not set — skipping, leaving the "
+              "committed bond file as-is.")
         return
-    rows = build_rows(ticker, api_key)
+    try:
+        rows = build_rows(ticker, api_key)
+    except Exception as e:                                   # noqa: BLE001
+        # Never fail the run: leave the committed file for the pipeline to use.
+        print(f"refresh_bonds: {e}. Leaving bonds/{ticker}.csv as-is.")
+        return
     path = write_bonds_csv(ticker, rows,
                            bonds_dir=os.environ.get("BONDS_DIR", "bonds"))
     print(f"  wrote {path} ({len(rows)} bonds)")
 
 
-# ---- self-test: baked-in live AT&T bonds, no network, no key ---------------
+# ---- self-test: T, VZ, KO with baked fixtures (no key, no network) ---------
 def self_test():
-    print("SELF-TEST — refresh_bonds for AT&T (live fixtures, no network)\n")
+    print("SELF-TEST — generic refresh_bonds (T, VZ, KO), no network\n")
     as_of = _dt.date(2026, 7, 17)
-    fx = [  # ISIN, Name, currency, ytw% (as EODHD returns, percent)
-        ("US00206RDQ20", "AT&T INC 4.25% 01Mar2027", "USD", 4.35, 99.93),
-        ("US00206RGL06", "AT&T INC 4.1% 15Feb2028",  "USD", 4.56, 99.29),
-        ("US00206RGQ92", "AT&T INC 4.3% 15Feb2030",  "USD", 4.80, 98.39),
-        ("US00206RCP55", "AT&T INC 4.5% 15May2035",  "USD", 5.48, 93.16),
-        ("US00206RFW79", "AT&T INC 4.9% 15Aug2037",  "USD", 5.50, 94.39),
-        ("US00206RDH21", "AT&T INC 5.15% 15Mar2042", "USD", 6.12, 90.33),
-        ("US00206RCG56", "AT&T INC 4.8% 15Jun2044",  "USD", 6.31, 83.92),
-        ("US00206RDS85", "AT&T INC 5.45% 01Mar2047", "USD", 6.38, 90.17),
-        ("US00206RDK59", "AT&T INC 4.55% 09Mar2049", "USD", 6.41, 77.71),
-        ("US00206RDT68", "AT&T INC 5.7% 01Mar2057",  "USD", 6.35, 91.20),
-        ("US887317AA00", "TIME WARNER 6.1% 15Jul2040", "USD", 11.0, 65.0),   # decoy
-        ("US25459HAA00", "DIRECTV 5.15% 15Mar2042", "USD", 18.2, 32.9),      # decoy
-        ("US00206RZZ00", "AT&T INC 3.5% 01Jan2030 EUR", "EUR", 3.5, 99.0),   # decoy
-    ]
-    pmap = {i: (y, p) for i, _, _, y, p in fx}
+    STOCK = {   # ticker -> (name, stock ISIN)
+        "T":  ("AT&T Inc",                   "US00206R1023"),
+        "VZ": ("Verizon Communications Inc", "US92343V1044"),
+        "KO": ("The Coca-Cola Company",      "US1912161007"),
+    }
+    # candidate bonds per core-name search (ISIN, Name, ccy, ytw%, price)
+    BONDS = {
+        "AT&T": [
+            ("US00206RDQ20", "AT&T INC 4.25% 01Mar2027", "USD", 4.35, 99.9),
+            ("US00206RCP55", "AT&T INC 4.5% 15May2035",  "USD", 5.48, 93.2),
+            ("US00206RDT68", "AT&T INC 5.7% 01Mar2057",  "USD", 6.35, 91.2),
+            ("US00206RDK59", "AT&T INC 4.55% 09Mar2049", "USD", 6.41, 77.7),
+            ("US001957AW94", "AT&T CORP 6.5% 15Mar2029", "USD", 5.20, 103.),
+        ],
+        "Verizon Communications": [
+            ("US92343VDY74", "VERIZON COMMUNICATIONS INC 4.125% 16Mar2027", "USD", 4.20, 99.6),
+            ("US92343VBS25", "VERIZON COMMUNICATIONS INC 6.4% 15Sep2033",  "USD", 4.90, 107.),
+            ("US92343VCZ58", "VERIZON COMMUNICATIONS INC 4.672% 15Mar2055", "USD", 6.30, 79.1),
+            ("US92343VBE39", "VERIZON COMMUNICATIONS INC 4.75% 01Nov2041",  "USD", 5.70, 88.1),
+            ("US92344XAB55", "VERIZON NEW YORK INC 7.375% 01Apr2032", "USD", 5.10, 110.5),
+        ],
+        "Coca-Cola": [
+            ("US191241AF58", "COCA-COLA FEMSA S A B DE C V 5.25% 26Nov2043", "USD", 5.6, 97.3),
+            ("US191216CR95", "COCA-COLA CO 3.45% 15Mar2027",  "USD", 3.9, 99.5),
+            ("US191216DE73", "COCA-COLA CO 4.2% 15May2043",   "USD", 4.9, 87.0),
+            ("US191216DP21", "COCA-COLA CO 4.125% 15Mar2053", "USD", 5.1, 89.2),
+            ("US191216DJ60", "COCA-COLA CO 4.0% 01Mar2034",   "USD", 4.3, 95.8),
+        ],
+    }
+    global eodhd_search, eodhd_bond_prints
+    pmap = {i: (y, p) for lst in BONDS.values() for i, _, _, y, p in lst}
 
-    global eodhd_search_bonds, eodhd_bond_prints
-    eodhd_search_bonds = lambda q, k, limit=500: (
-        [{"Code": i, "Name": n, "ISIN": i, "Currency": c} for i, n, c, _, _ in fx]
-        if q == "AT&T" else [])
+    def fake_search(query, api_key, bonds_only=False, limit=500):
+        if not bonds_only:                      # resolve_issuer path
+            for tk, (nm, isin) in STOCK.items():
+                if query.upper() == tk:
+                    return [{"Code": tk, "Exchange": "US", "Type": "Common Stock",
+                             "Name": nm, "ISIN": isin}]
+            return []
+        return [{"Code": i, "Name": n, "ISIN": i, "Currency": c}
+                for i, n, c, _, _ in BONDS.get(query, [])]
+
+    eodhd_search = fake_search
     eodhd_bond_prints = lambda i, k, days=7: (
-        [{"date": "2026-07-16", "price": pmap[i][1], "yield": pmap[i][0], "volume": 0}]
+        [{"date": "2026-07-16", "price": pmap[i][1], "yield": pmap[i][0]}]
         if i in pmap else [])
 
-    rows = build_rows("T", "FAKE", as_of)
-    path = write_bonds_csv("T", rows, bonds_dir="/tmp/bonds_selftest")
-    print(f"\n  wrote {path}")
-    print("  issuers in file:", sorted({r['Issuer'] for r in rows}))
-    print("  n rows:", len(rows), "(decoys Time Warner / DIRECTV / EUR must be gone)")
-    print("  first 3 rows:")
-    for r in rows[:3]:
-        print("   ", r["Maturity date"], r["Coupon %"], "cpn  ytw", r["YTW %"])
-    assert len(rows) == 10, "decoys should be excluded"
-    assert all("AT&T" in r["Issuer"] for r in rows)
-    print("\n  SELF-TEST PASSED (10 clean AT&T bonds, media + non-USD excluded)")
+    for tk in ("T", "VZ", "KO"):
+        print(f"--- {tk} ---")
+        rows = build_rows(tk, "FAKE", as_of)
+        write_bonds_csv(tk, rows, bonds_dir="/tmp/bonds_v2")
+        isins = [r["Symbol"].split()[0] for r in rows]
+        print(f"   kept CUSIP6 set: {sorted({i[2:8] for i in isins})}\n")
+
+    ko = _read("/tmp/bonds_v2/KO.csv")
+    assert not any("191241" in r["Symbol"] for r in ko), "FEMSA must be excluded from KO"
+    assert all("191216" in r["Symbol"] for r in ko), "KO must be all Coca-Cola Co"
+    t = _read("/tmp/bonds_v2/T.csv")
+    assert all("00206R" in r["Symbol"] for r in t), "T must be AT&T Inc CUSIP6 only"
+    vz = _read("/tmp/bonds_v2/VZ.csv")
+    assert all("92343V" in r["Symbol"] for r in vz), "VZ must be Verizon Comms CUSIP6"
+    print("SELF-TEST PASSED  same-name-different-company (FEMSA) excluded; each "
+          "ticker resolved automatically with NO hand-written list.")
+
+
+def _read(path):
+    with open(path) as f:
+        return list(csv.DictReader(f))
 
 
 if __name__ == "__main__":
