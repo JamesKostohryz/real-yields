@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       ticker:
-        description: "Ticker (leave blank to use the TICKER cell in the bonds sheet)"
+        description: "Ticker (leave blank to use the TICKER cell in the Cockpit sheet)"
         required: false
         default: ""
       obs_category:
@@ -21,11 +21,12 @@ on:
 permissions:
   contents: write
 
-# NOTE: BONDS_SHEET_ID was removed on purpose. With it gone, run_company reads the
-# committed bonds/<TICKER>.csv file — which the new "Refresh bonds from EODHD" step
-# regenerates automatically. That is what retires the manual TradingView paste.
-# (If you ever want to hand-edit a company's bonds again, drop a bonds/<T>.csv in
-#  the repo; any ticker NOT in refresh_bonds.py is left exactly as committed.)
+# The Cockpit Google Sheet drives the run: put the ticker in its TICKER cell.
+# You keep the TICKER cell but LEAVE THE BOND ROWS EMPTY — EODHD now supplies the
+# bonds. With no bond rows in the sheet, run_company falls back to the committed
+# bonds/<TICKER>.csv, which the "Refresh bonds from EODHD" step regenerates first.
+env:
+  BONDS_SHEET_ID: "1KnbQFHWFXhZZ7Fy2rB1KplWT3GYblNlIEWDh7BzLOC4"
 
 jobs:
   build:
@@ -40,9 +41,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # NEW: pull this issuer's bonds straight from EODHD and rewrite
-      # bonds/<TICKER>.csv. Safe no-op for tickers not configured in
-      # refresh_bonds.py or if the key/ticker is missing.
+      # Pull this issuer's bonds from EODHD and rewrite bonds/<TICKER>.csv.
+      # It reads the ticker from the workflow box if given, else the sheet's
+      # TICKER cell (same reader run_company uses). Safe no-op on any error.
       - name: Refresh bonds from EODHD
         env:
           EODHD_API_KEY: ${{ secrets.EODHD_API_KEY }}
