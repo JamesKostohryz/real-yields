@@ -1,8 +1,8 @@
 field,value
 ticker,T
-generated_utc,2026-07-18 05:21 UTC
-generated_iso,2026-07-18T05:21:18Z
-bonds_source,committed-file
-n_bonds,38
-run_id,29632094400
-git_sha,55249fb
+generated_utc,2026-07-19 06:26 UTC
+generated_iso,2026-07-19T06:26:23Z
+bonds_source,google-sheet
+n_bonds,52
+run_id,29676425163
+git_sha,eb4c449
