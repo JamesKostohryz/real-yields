@@ -1,0 +1,162 @@
+HAND-OFF PACKAGE — Real Yields & Long-Term Inflation Expectations
+(this chat only. Integrated v3 work done Friday 2026-07-17, building on earlier chats.)
+
+====================================================================
+1. MODULE & PURPOSE
+====================================================================
+Reconstructed a monthly U.S. Treasury REAL yield curve at 1/5/10/20/30-year tenors, Sept
+1877–June 2026, in two risk concepts (ex-ante = nominal − expected inflation; TIPS-like =
+nominal − breakeven), plus the underlying long-horizon expected-inflation term structure. It
+extends the Cleveland Fed real-rate series (starts 1982) back to the gold standard, and feeds
+the AEG/cost-of-equity model's real (TIPS-based) risk-free input.
+
+====================================================================
+2. ARTIFACTS PRODUCED
+====================================================================
+All outputs delivered via chat; NOT yet on GitHub. "THE file" = real_yield_curve_v3_MASTER.csv.
+FINAL: real_yield_curve_v3_MASTER.csv; DOCUMENTATION_real_yield_curve_v3.md; real_10y_v3_FINAL.png;
+  "Long Term Inflation Expectations & Real Yields.zip" (handoff subset).
+BUILD/DEPLOY: build_real_yield_curve.py (ex-ante v2 only, verified 0.002pp; v3 not folded in);
+  README_real_yields.md; real_yields_monthly.yml (draft Action); METHODS_real_yield_curve_v2.md.
+INTERMEDIATE CSVs (scaffolding): real_yield_curve_v2.csv, _v2_MASTER.csv, _v2_tipslike.csv,
+  _cleveland_anchored.csv, _cleveland_anchored_v2.csv, _NSS_1877.csv, _1877_present.csv,
+  expected_inflation_termstructure_v2.csv (the engine), _termstructure_1877.csv,
+  expected_inflation_10y_1914_present.csv, _10y_1979_present.csv,
+  model_expected_inflation_1914_present.csv, real_10y_1877_present.csv,
+  real_10y_1914_present_FINAL.csv, real_10y_extended_1914.csv, real_1y_1877_present.csv,
+  real_yields_reconstructed_1961_present.csv, synthetic_real_yields_1971_2013.csv,
+  spf_expected_inflation.csv, spf_inflation_expectations_tidy.csv.
+CHARTS (png): cleveland_vs_ours, exante_vs_tipslike_10y, expected_inflation_backfill_1914,
+  expected_inflation_termstructure, implied_10y_inflation_risk_premium, method_comparison,
+  nominal_crossvalidation, per_tenor_validation_current, real_10y_1877_present,
+  real_10y_1914_present_FINAL, real_10y_cleveland_anchored, real_10y_v2_vs_v1, real_10y_v3_FINAL,
+  real_1y_1877_present, real_yield_curve_1877, real_yields_reconstructed_1961,
+  spf_vs_groen_breakeven_overlap, synthetic_real_yield_10y, three_way_comparison,
+  tips_validation_panels.
+
+====================================================================
+3. DATA SOURCES & APIs
+====================================================================
+NOMINAL: GSW feds200628.csv (federalreserve.gov/data/yield-curve-tables/feds200628.csv; on repo
+  as "feds200628 (1).csv"); GSW real feds200805.csv (same site; PUBLIC no key; uploaded as
+  feds200805__1_.csv). GFD tenor files on repo (IGUSA1/5/10/20/30D; ITUSA3D T-bill 1920+ in
+  "3M Treasury Yield Data - Global"); "Interest Rate Data.xlsx" sheet "Commercial Paper 1831".
+CPI: GFD_CPI.xlsx sheet "Price Data" (David-Solar→Fed→Snyder 1875-1912→BLS 1913); FRED CPIAUCNS
+  (1913+) / CPIAUCSL (1947+). FRED CSV: fred.stlouisfed.org/graph/fredgraph.csv?id=CPIAUCNS.
+EXPECTED INFLATION: Phila Fed SPF Inflation.xlsx (INFCPI1YR/INFCPI10YR/INFPGDP1YR) +
+  Additional-CPIE10.xlsx (Blue Chip/Livingston 10y 1979+) + spf-documentation.pdf. Cleveland Fed
+  Inflation_expectations__4_.xlsx (sheets: Expected Inflation 1-30yr DECIMAL, Real Interest Rate
+  1mo/1y/10y DECIMAL, Ten-year Expected Chart). FRED EXPINF{1..30}YR / REAINTRATREARAT{1YE,10Y}
+  (need key). Source: clevelandfed.org/indicators-and-data/inflation-expectations.
+BREAKEVENS/REAL: NY Fed Groen Synthetic_TIPS_Breakeven_Rates.xlsx (header row 14; backcast
+  1971-09→1999-01, actual 1999-01→2013-04). Actual TIPS FRED DFII5/7/10/20/30 (uploaded).
+NOMINAL CROSS-VAL: Shiller ie_data.xls (uploaded ie_data__3_.xls; "Data" header row 7; "Long
+  Interest Rate GS10" = Homer-Sylla 1871+). http://www.econ.yale.edu/~shiller/data/ie_data.xls.
+KEYS: FRED API key — declined by assistant (not needed for public GSW files; credential
+  shouldn't sit in chat). In production pipeline it is a GitHub repo SECRET, used for FRED series
+  only. SANDBOX CONSTRAINT: assistant can reach ONLY raw.githubusercontent.com/github.com/
+  api.github.com (+package registries); NOT federalreserve.gov/FRED/clevelandfed.org. So data
+  arrives via commit-to-repo→raw pull, or chat upload.
+PRODUCTION PIPELINE (uploaded v2_pipeline_live_2.zip = CODE only): asfp/ (datasources.py fetches
+  feds200628/feds200805/EXPINF/DFII/DGS; model.py = GSW TIPS 2-20y band extended via Cleveland
+  EXPINF + estimated phi). Repo outputs/: curve_latest.csv (current 30-tenor cross-section with
+  nominal/real/breakeven/exp_inflation/phi), history.csv, headline_history.csv (recent runs only).
+
+====================================================================
+4. HOW IT CONNECTS
+====================================================================
+INPUTS: GSW nominal+real, CPI (GFD+FRED), expected inflation (Cleveland+SPF), breakevens/real
+  (Groen+DFII), Homer-Sylla nominal (cross-val).
+OUTPUT: real_yield_curve_v3_MASTER.csv — the real risk-free curve. Feeds: AEG/cost-of-equity
+  cockpit (TIPS-like real = real risk-free base), ERP/term-structure COE, cost-of-debt spine.
+
+====================================================================
+5. CURRENT STATUS
+====================================================================
+v3 master CSV — DONE (validated; 1970s ex-ante flagged). v3 documentation — DONE. Handoff zip —
+DONE. build_real_yield_curve.py — DONE for ex-ante v2 (0.002pp); v3 integration NOT folded in →
+IN PROGRESS. Action/README — DRAFT (v2). Intermediate CSVs/charts — DONE (frozen). Live on
+GitHub — NOT STARTED.
+
+====================================================================
+6. HOW IT UPDATES TODAY (manual)
+====================================================================
+No automation yet. To refresh with the assistant: (1) download fresh feds200628.csv &
+feds200805.csv from federalreserve.gov; (2) refresh CPIAUCNS, DFII5/7/10/20/30, Cleveland
+spreadsheet (or FRED EXPINF) via their Download→CSV; (3) commit the GSW files to repo OR attach
+all in a new chat; (4) ask assistant to rebuild — NOTE today the one script regenerates only the
+ex-ante v2 stage; v3 steps (Cleveland anchor, Groen/TIPS splice, phi) must be re-run
+interactively until consolidated. (James's ASFP production pipeline already refreshes the MODERN
+curve weekly via Actions + FRED key — a separate live system.)
+
+====================================================================
+7. REPO / DYNAMIC-LINK MECHANICS
+====================================================================
+Repo: https://github.com/JamesKostohryz/real-yields (PUBLIC).
+UPLOAD (same flow used for feds200628): repo → "Add file" → "Upload files" → drag file → wait
+for upload bar → "Commit changes". Browser appends " (1)" to duplicate names.
+ASSISTANT PULLS via raw (sandbox-reachable):
+  https://raw.githubusercontent.com/JamesKostohryz/real-yields/main/<FILE>  (spaces=%20, e.g.
+  .../main/feds200628%20(1).csv). Locate files via tree HTML scrape or
+  api.github.com/repos/JamesKostohryz/real-yields/contents/<dir> (rate-limited unauthenticated).
+PUBLISH v3 LIVE: once committed, stable raw URL =
+  https://raw.githubusercontent.com/JamesKostohryz/real-yields/main/real_yield_curve_v3_MASTER.csv
+GOOGLE SHEETS IMPORTDATA/IMPORTRANGE: n/a in THIS chat (would point IMPORTDATA at the raw URL above).
+
+====================================================================
+8. OPEN QUESTIONS / KNOWN ISSUES
+====================================================================
+- 1970s EX-ANTE biased LOW (UCSV E[π] overshoots in high-inflation/lagging-expectations regimes;
+  use TIPS-like/Groen for 1970s; mild post-COVID overshoot too → modern ex-ante is Cleveland-anchored).
+- IRP (phi) most model-dependent pre-1971 (no breakevens); market modern IRP ≈ 0 (κ·E[π] model
+  retired); pre-1971 phi regime-based (0 gold→~0.4 by 1971), indicative, wide bands.
+- Pre-1920 = regime characterization (~2.5-3% real under gold), not precise points; WWI 1917-19
+  gold-anchor strained.
+- v3 NOT consolidated into one script → not one-click reproducible.
+- feds200805 & Cleveland/DFII via chat upload, not committed → can't self-refresh until on repo
+  (or fetched with FRED key).
+
+====================================================================
+9. ANYTHING I'D REGRET LOSING (decisions & why)
+====================================================================
+- NO-BLEND SPLICE at 1982: replaced an earlier 1982-86 blend (which masked the disinflation E[π]
+  overshoot) with a continuity correction that fixes the overshoot at the join, decaying to 0 by
+  1976 (+0.29pp organic step, pre-1976 untouched).
+- CLEVELAND VALIDATION: our independent ex-ante ≈ Cleveland real rate, corr 0.94 / gap 0.08pp.
+  Cleveland real rate ≈ EX-ANTE (not TIPS-like).
+- TIPS VALIDATION: Cleveland-anchored real vs ACTUAL TIPS corr 0.93-0.99, MAE 0.14-0.46pp
+  (1999-2026); adopting market phi makes TIPS-like = actual TIPS exactly.
+- Cleveland publishes real rate only at 1mo/1y/10y but E[π] at ALL 1-30; nominal − Cleveland E[π]
+  reproduces their 10y real to 0.37pp → that's how every tenor is Cleveland-anchored.
+- His production "real" is TIPS-anchored (feds200805) = TIPS-like; his "phi" = market IRP; final
+  TIPS-like should tie to his phi where TIPS exist.
+- Shiller CPI (Warren-Pearson wholesale pre-1913) NOT used for CPI (GFD better); Shiller used only
+  for Homer-Sylla nominal cross-check. Groen bottoms at 1971-09, ends 2013-04.
+- Carried from earlier chats: real-terms operation; CPI-U now, BEA nonresidential deflator flagged
+  as future alternative; load full data spans and subset via lookup.
+
+====================================================================
+10. WHERE THIS WAS HEADED
+====================================================================
+End state: a documented, cross-validated, SELF-REGENERATING 149-year real yield curve on GitHub,
+published as a stable raw CSV that the AEG cockpit / ERP / cost-of-debt modules pull live. This
+session (2026-07-17) reached the finished v3 dataset + docs + handoff zip. Next milestone = "go
+live" (Level 1 store, then Level 2 automation) — James wants to do go-live together in a later session.
+
+====================================================================
+11. RECOMMENDED NEXT STEPS (priority order)
+====================================================================
+1. LEVEL 1 — PRESERVE NOW (5 min, no assistant): commit real_yield_curve_v3_MASTER.csv,
+   DOCUMENTATION_real_yield_curve_v3.md, + 3 key charts to the repo → stable raw link.
+2. COMMIT PUBLIC SOURCE FILES: feds200628 (there) + feds200805.csv (upload) — prereq for automation.
+3. CONSOLIDATE v3 INTO ONE VERIFIED SCRIPT (assistant session): extend build_real_yield_curve.py
+   v2→v3 (Cleveland anchor + Groen/TIPS splice + market-phi + no-jump), re-verify ~0.002pp. MAIN
+   unfinished task.
+4. ORGANIZE SOURCE FILES into repo data/ folder matching script; store FRED key as GitHub secret.
+5. WIRE GITHUB ACTION (monthly): curl GSW files, pull EXPINF/DFII with key, run script, commit
+   refreshed v3 CSV; test via workflow_dispatch then schedule.
+6. TIE TIPS-like TO PRODUCTION phi where TIPS exist (1999+) so history connects to the live ASFP pipeline.
+7. OPTIONAL (low priority): improve pre-1982 E[π] (fix 1970s overshoot via surveys); explore BEA
+   nonresidential deflator; widen actual-TIPS tenor coverage at 1y/30y.
+
+SINGLE SOURCE OF TRUTH: real_yield_curve_v3_MASTER.csv. Everything else is scaffolding.

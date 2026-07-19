@@ -1,0 +1,22 @@
+name: rebuild-real-yields
+on:
+  schedule: [{cron: "0 9 5 * *"}]   # 5th of each month
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install pandas numpy statsmodels python-calamine openpyxl
+      - name: Refresh GSW + FRED CPI (the only monthly-updating inputs)
+        run: |
+          curl -sSL -o data/feds200628.csv https://www.federalreserve.gov/data/yield-curve-tables/feds200628.csv
+          curl -sSL -o data/CPIAUCNS.csv "https://fred.stlouisfed.org/graph/fredgraph.csv?id=CPIAUCNS"
+      - run: SRC=./data OUT=./outputs python build_real_yield_curve.py
+      - name: Commit refreshed dataset
+        run: |
+          git config user.name "real-yields-bot"; git config user.email "bot@users.noreply.github.com"
+          git add outputs/real_yield_curve_v2.csv && git commit -m "monthly update $(date +%Y-%m)" || echo "no change"
+          git push
