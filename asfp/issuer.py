@@ -164,6 +164,14 @@ def write_outputs(outdir, ticker, tables, meta, fund):
               "wavg_coupon", "wavg_years", "rating", "offset"]:
         if meta.get(k) is not None:
             rows.append({"field": k, "value": meta[k]})
+    # PROVENANCE: the feed publishes no per-bond amount outstanding, so the bond list
+    # is notional-weighted by allocating the issuer's REPORTED book total debt evenly
+    # across the observed bonds (refresh_bonds.eodhd_book_total_debt). Market value of
+    # debt is therefore book debt marked to the mean traded price of the issuer's own
+    # curve -- an approximation, NOT issue-level truth. Tag it so no downstream
+    # consumer mistakes it for the latter. Upgrade path: a real 10-K/XBRL schedule.
+    if meta.get("market_value_of_debt") is not None:
+        rows.append({"field": "mvd_basis", "value": "book-scaled"})
     pd.DataFrame(rows).to_csv(f"{outdir}/company_{t}.csv", index=False)
     return [f"cod_{t}.csv", f"cod_{t}_annual.csv", f"coe_{t}.csv",
             f"coe_{t}_annual.csv", f"company_{t}.csv"]

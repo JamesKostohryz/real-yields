@@ -189,6 +189,36 @@ BOND_COLS = ["Symbol", "YTW %", "Price %", "Coupon %", "Maturity date",
              "Issuer"]
 
 
+def eodhd_book_total_debt(ticker, api_key):
+    """Reported BOOK total debt (short + long), absolute USD, or None.
+
+    EODHD publishes no per-bond amount outstanding (verified against
+    /bond-fundamentals: the payload carries coupon/maturity/price/ratings only), so
+    the bond list cannot be notional-weighted from the feed. We anchor instead to the
+    issuer's reported total debt -- a real filed number -- and allocate it.
+    """
+    url = (f"{EODHD_BASE}/fundamentals/{quote(ticker.upper())}.US"
+           f"?api_token={api_key}&fmt=json"
+           f"&filter=Financials::Balance_Sheet::yearly")
+    try:
+        d = _get_json(url)
+    except Exception as e:                                   # noqa: BLE001
+        print(f"    [WARN] fundamentals for {ticker} failed: {e}")
+        return None
+    if not isinstance(d, dict) or not d:
+        return None
+    for y in sorted(d.keys(), reverse=True):
+        bs = d[y] or {}
+        for f in ("shortLongTermDebtTotal", "totalDebt"):
+            v = bs.get(f)
+            if v not in (None, "", "0", 0):
+                try:
+                    return float(v)
+                except (TypeError, ValueError):
+                    continue
+    return None
+
+
 def build_rows(ticker, api_key, as_of=None):
     as_of = as_of or _dt.date.today()
     name, isin = resolve_issuer(ticker, api_key)
@@ -223,6 +253,29 @@ def build_rows(ticker, api_key, as_of=None):
                            f"overwrite bonds/{ticker}.csv")
     rows.sort(key=lambda r: r["Maturity date"])
     print(f"  kept {len(rows)} {ticker} bonds")
+
+    # --- amount outstanding: BOOK-SCALED allocation ----------------------------
+    # The feed has no per-bond amount outstanding, and debt_analytics DROPS any bond
+    # without one -- which zeroes market value of debt, portfolio YTM and duration.
+    # So anchor to the issuer's REPORTED book total debt and spread it evenly over the
+    # observed bonds. Market value of debt then collapses to
+    #       MVD = book_debt * mean(price_frac)
+    # i.e. reported debt marked to the mean traded price of the issuer's own curve.
+    # This is an APPROXIMATION (equal notional weighting across maturities); it is
+    # tagged 'book-scaled' in company_<T>.csv so it is never mistaken for
+    # issue-level truth. Upgrade path: a real 10-K/XBRL debt schedule.
+    book = eodhd_book_total_debt(ticker, api_key)
+    if book and rows:
+        per = book / len(rows)
+        for r in rows:
+            r["Outstanding amt"] = round(per, 2)
+        mean_px = sum(r["Price %"] for r in rows) / len(rows)
+        print(f"  book-scaled outstanding: total debt ${book/1e9:,.1f}B over {len(rows)} "
+              f"bonds (${per/1e9:,.2f}B each); mean price {mean_px:.4f} "
+              f"-> MVD ~ ${book*mean_px/1e9:,.1f}B")
+    else:
+        print(f"  [WARN] no book total debt for {ticker}; 'Outstanding amt' left blank "
+              f"(market value of debt will be unavailable)")
     return rows
 
 

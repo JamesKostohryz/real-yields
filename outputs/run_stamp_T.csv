@@ -1,8 +1,8 @@
 field,value
 ticker,T
-generated_utc,2026-07-20 17:58 UTC
-generated_iso,2026-07-20T17:58:57Z
+generated_utc,2026-07-20 19:33 UTC
+generated_iso,2026-07-20T19:33:28Z
 bonds_source,committed-file
 n_bonds,27
-run_id,29765750994
-git_sha,18a8c64
+run_id,local
+git_sha,
