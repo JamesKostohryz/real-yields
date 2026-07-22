@@ -57,6 +57,15 @@ jobs:
           ORY_OVERRIDE: "${{ github.event.inputs.ory_override }}"
         run: python -m asfp.run_company
 
+      # Decision B (ERP 0700): the valuation basis is ERP's forward curve, not the
+      # pipeline's own real curve / variance ERP. Re-apply it on top of what the
+      # generator just wrote, BEFORE the commit — otherwise this job silently
+      # reverts the decision (asfp-bot b701da3 did exactly that, leaving the engine
+      # discounting at pipeline-rf + ERP-erp). No-op if history/ERP_OVERLAY.json is
+      # absent; fails the job loudly rather than committing a wrong rate.
+      - name: Apply ERP forward-curve overlay (Decision B)
+        run: python apply_erp_overlay.py
+
       - name: Commit
         run: |
           git config user.name "asfp-bot"

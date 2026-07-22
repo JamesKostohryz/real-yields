@@ -1,0 +1,9 @@
+{
+  "_why": "James's Decision B (ERP 0700, 2026-07-22): the VALUATION basis is ERP's term structure, not the pipeline's own real curve / variance ERP. Applied as a pipeline step so regeneration cannot silently revert it (asfp-bot b701da3 did exactly that).",
+  "forward_curve": "history/TODAY_forward_curve_2026-06.csv",
+  "effective": {
+    "_source": "ERP effective series: real_rf <- eff_tips_ry (NOT rf_eff), market_erp <- eff_erp. Sum = 6.236 = today's eff_coe. Duration 24.3, date 2026-06-01. COCKPIT gate-blessed 2026-07-22 15:42.",
+    "real_rf_pct": 2.349,
+    "market_erp_pct": 3.887
+  }
+}
