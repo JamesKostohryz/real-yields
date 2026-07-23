@@ -3,7 +3,7 @@
   "_auto_latest": "ERP 1826 / James: this file holds ONLY paths + the source->target column mapping. It carries NO numbers, so a new vintage needs no edit here - ERP overwrites the two _latest files and the next pipeline run picks them up. Pinned constants were a silent-staleness hole.",
   "forward_curve": "history/TODAY_forward_curve_latest.csv",
   "effective": "history/ERP_effective_latest.csv",
-  "max_vintage_age_days": 45,
+  "max_vintage_age_days": 5,
   "mapping": {
     "curve_latest_annual":  { "real": "spot_real_yield", "real_fwd1y": "fwd_real_yield" },
     "coe_v2_latest_annual": { "real_rf": "fwd_real_yield", "market_erp": "fwd_erp" },

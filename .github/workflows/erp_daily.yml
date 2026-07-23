@@ -1,64 +1,65 @@
-name: erp-daily-close (DISPATCH-ONLY — not yet scheduled)
+name: erp-daily-close
 
-# STATUS: staged, NOT live. There is deliberately NO `schedule:` trigger.
-# James's 2026-07-22 decision moves the ERP "today" curve from a frozen monthly
-# vintage to a daily-close rebuild (build_erp_daily.py v4 engine; run_erp_daily.py writer).
-# June-2026 stays the committed basis until ERP eyeballs a live run and posts GREEN.
+# The ERP "today" curve is rebuilt each weekday close (James's 2026-07-22 decision):
+# build_erp_daily.py (v4 engine) + run_erp_daily.py (writer) publish
+#   history/TODAY_forward_curve_latest.csv + history/ERP_effective_latest.csv,
+# which the auto-latest overlay (apply_erp_overlay.py) consumes on the next pipeline run.
 #
-# DELIVERED (ERP 2026-07-23 + EXEC wiring):
-#   - build_erp_daily.py           : v4 library + HERMETIC self-test gate (no external files).
-#   - run_erp_daily.py             : runner/writer -> history/TODAY_forward_curve_latest.csv +
-#                                    history/ERP_effective_latest.csv (auto-latest overlay consumes them).
-#                                    fetch_daily_inputs() WIRED to FRED (DFII5/10/20/30, DGS1, SP500)
-#                                    via asfp.datasources.fetch_fred_asof. EXEC fix: effective row 4dp so
-#                                    eff_coe == eff_tips_ry+eff_erp within overlay TOL_IDENT (1e-3).
-#   - ERP_HELD_STATE_2026-06.json  : monthly-anchored slow state.
-#   - tests/test_erp_daily_writer.py : hermetic writer<->overlay contract test.
+# Turned live 2026-07-23 after ERP eyeballed a GREEN live preview (eff_coe 6.38%, identity exact
+# at 4dp, FRED sources confirmed: DFII5/10/20/30 real, DGS1 nominal-1y, SP500 close).
 #
-# NORMAL DISPATCH runs the hermetic gate + contract test (offline, always green when healthy).
-# LIVE PREVIEW (dispatch input live_preview=true) does a READ-ONLY live FRED fetch + build and prints
-# the result for ERP to eyeball. It commits NOTHING.
+# JOBS
+#   gate    : ALWAYS runs (schedule + dispatch). Hermetic acceptance gate + writer<->overlay
+#             contract test. Fully offline, fail-closed. Publishing depends on it.
+#   publish : needs gate. Runs on schedule, or manual dispatch with publish=true. Fetches today's
+#             FRED inputs, rebuilds, writes the two _latest files, commits + pushes them.
+#             Fail-closed: fetch raises if FRED_API_KEY unset or any series missing, and the whole
+#             job is skipped if gate fails.
 #
-# STILL REQUIRED to flip to scheduled (a later change):
-#   1. ERP dispatches the live preview, confirms the fetched inputs + effective, posts the green.
-#   2. EXEC adds a `schedule:` cron + a contents:write writer step that commits the two _latest files
-#      (mirroring weekly.yml), AND retunes the staleness guard 45d -> ~3 business days IN THE SAME change.
+# Manual dispatch inputs: live_preview=true = READ-ONLY fetch preview (no commit);
+#                         publish=true      = do a real publish now (for the first confirmed run).
 
 on:
+  schedule:
+    # every weekday 12:30 UTC (~7:30am Central), 30 min after weekly-real-yields (12:00) to avoid a
+    # push race. Rebuilds the ERP curve from the latest published FRED real/nominal + S&P close.
+    - cron: "30 12 * * 1-5"
   workflow_dispatch:
     inputs:
       live_preview:
-        description: "READ-ONLY live FRED fetch preview for ERP eyeball (no commit)."
+        description: "READ-ONLY live FRED fetch preview for eyeball (no commit)."
+        type: boolean
+        default: false
+      publish:
+        description: "Publish now: fetch + rebuild + commit the two _latest files."
         type: boolean
         default: false
 
 permissions:
   contents: read
 
+concurrency:
+  group: erp-daily-close
+  cancel-in-progress: false
+
 jobs:
   gate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
       - name: Install dependencies
         run: pip install -r requirements.txt
-
       - name: Smoke — v4 library loads (fail-closed on import/precompute)
         run: python -c "import build_erp_daily as b; print('build_erp_daily import OK; params locked, TMAX=%d' % b.TMAX)"
-
       - name: Acceptance gate — hermetic self-test (reproduces committed June <1bp, no external files)
         run: python build_erp_daily.py
-
       - name: Writer <-> overlay contract (runner writes _latest; apply_erp_overlay readers validate identities)
         run: python tests/test_erp_daily_writer.py
-
-      - name: Live preview (READ-ONLY; ERP eyeball; no commit)
-        if: ${{ inputs.live_preview == 'true' }}
+      - name: Live preview (READ-ONLY; no commit)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.live_preview == 'true' }}
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: |
@@ -81,5 +82,51 @@ jobs:
           c = ovl.load_curve(d + "/TODAY_forward_curve_latest.csv")
           e = ovl.load_effective(d + "/ERP_effective_latest.csv")
           print("OVERLAY OK: curve tenors=%d, eff=%s" % (len(c), e))
-          print("NOTE: read-only preview; nothing committed. June stays the basis until ERP posts green + cron is added.")
+          print("NOTE: read-only preview; nothing committed.")
           PY
+
+  publish:
+    needs: gate
+    if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.publish == 'true') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Rebuild + write the two _latest files (fail-closed on fetch)
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: |
+          python - <<'PY'
+          import json, datetime, importlib.util
+          import run_erp_daily as rr
+          state = json.load(open("ERP_HELD_STATE_2026-06.json"))
+          asof = datetime.date.today().isoformat()
+          reals, nom, sp = rr.fetch_daily_inputs(asof)
+          r = rr.run(asof, reals, nominal_1y=nom, sp_close=sp, state=state, outdir="history")
+          print("PUBLISH %s: eff tips=%.4f erp=%.4f coe=%.4f dur=%.2f" % (asof, r["eff_tips"], r["eff_erp"], r["eff_coe"], r["D_out"]))
+          # fail-closed: validate the just-written files with the overlay's OWN readers before committing
+          spec = importlib.util.spec_from_file_location("ovl", "apply_erp_overlay.py")
+          ovl = importlib.util.module_from_spec(spec)
+          try:
+              spec.loader.exec_module(ovl)
+          except SystemExit:
+              pass
+          c = ovl.load_curve("history/TODAY_forward_curve_latest.csv")
+          e = ovl.load_effective("history/ERP_effective_latest.csv")
+          assert len(c) == 30, "forward curve must have 30 tenors"
+          print("OVERLAY VALIDATED: curve tenors=%d, eff=%s" % (len(c), e))
+          PY
+      - name: Commit + push the two _latest files
+        run: |
+          git config user.name "asfp-bot"
+          git config user.email "asfp-bot@users.noreply.github.com"
+          git add history/TODAY_forward_curve_latest.csv history/ERP_effective_latest.csv
+          git commit -m "erp-daily: publish ERP today curve $(date -u +%F)" || { echo "no changes to commit"; exit 0; }
+          git pull --rebase --autostash origin main || true
+          git push

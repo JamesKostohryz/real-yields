@@ -52,15 +52,17 @@ FAILURE POLICY
   HARD FAIL (exit 1)  : decomposition/identity breakage — fwd_coe != rf+erp,
                         eff_coe != eff_tips_ry+eff_erp, malformed grid, missing columns.
                         Never commit a silently wrong rate.
-  LOUD WARNING only   : vintage older than max_vintage_age_days. A late vintage must not
-                        break the weekday pipeline (monthly cadence with slack).
+  LOUD WARNING only   : vintage older than max_vintage_age_days. Now a DEAD-FEED alarm:
+                        the daily-close job (erp_daily.yml) rewrites the vintage every weekday,
+                        so a healthy age is 0-5 days (weekends/holidays). >5 means the daily
+                        job stopped or the feed broke. Warns; never breaks the pipeline.
 """
 import csv, datetime as dt, glob, json, math, os, sys
 
 CONFIG = os.path.join("history", "ERP_OVERLAY.json")
 PROVENANCE = os.path.join("outputs", "erp_overlay_provenance.csv")
 TOL_DEC, TOL_PCT, TOL_IDENT = 1e-9, 5e-4, 1e-3
-DEFAULT_MAX_AGE_DAYS = 45
+DEFAULT_MAX_AGE_DAYS = 5   # dead-feed alarm for the daily-close job (~3 business days incl. weekends)
 
 
 class OverlayError(Exception):
@@ -267,8 +269,9 @@ def main():
     if stale:
         msg = (f"ERP vintage {eff['vintage']} ({eff['date']}) is {age} days old, older than "
                f"max_vintage_age_days={max_age}. The overlay re-applied it, so the published "
-               f"basis may be a cycle behind. ERP: publish a new vintage by overwriting "
-               f"history/TODAY_forward_curve_latest.csv + history/ERP_effective_latest.csv.")
+               f"basis may be stale. DEAD-FEED ALARM: the daily-close job (erp_daily.yml) should "
+               f"rewrite history/TODAY_forward_curve_latest.csv + history/ERP_effective_latest.csv "
+               f"every weekday — check that the scheduled run is succeeding (FRED feed / Actions).")
         print(f"::warning title=ERP vintage stale::{msg}")
         print(f"[erp-overlay] WARNING: {msg}")
     return 0
