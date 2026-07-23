@@ -1,0 +1,19 @@
+{
+  "anchor_vintage": "2026-06",
+  "note": "Held/slow ERP state, re-anchored on the 1st business day of each month (or when the real-yield master / SP500 normalized series publish a new vintage). Between anchors ONLY the daily real curve + norm_ey move.",
+  "vs": 0.9348,
+  "fey_in": 6.02,
+  "D_in": 24.72,
+  "cost": 0.503,
+  "corp_prem": 1.8,
+  "breakeven1y": 2.76,
+  "cpi_factor": 0.99844,
+  "normalized_X4": 234.1507,
+  "sources": {
+    "reals_5_10_20_30": "Treasury Daily Par Real Yield Curve (5/7/10/20/30); 7y optional belly point",
+    "nominal_1y": "Treasury Daily Par Yield Curve, 1Y tenor",
+    "one_year_real_rule": "real_1y = nominal_1y - breakeven1y (breakeven held from the monthly master vintage)",
+    "norm_ey_rule": "norm_ey = 100 * normalized_X4 * cpi_factor / sp_close  (SP500 normalized earnings LEVEL / real price; price is daily)",
+    "sp_close": "S&P 500 index close (nominal)"
+  }
+}

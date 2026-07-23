@@ -2,23 +2,28 @@ name: erp-daily-close (DISPATCH-ONLY — not yet scheduled)
 
 # STATUS: staged, NOT live. There is deliberately NO `schedule:` trigger.
 # James's 2026-07-22 decision moves the ERP "today" curve from a frozen monthly
-# vintage to a daily-close rebuild (build_erp_daily.py, v4 engine). Until ERP
-# confirms the two remaining production inputs and posts a GREEN acceptance gate,
+# vintage to a daily-close rebuild (build_erp_daily.py, v4 engine; run_erp_daily.py
+# writer). Until the daily data feed is wired and ERP posts a GREEN live run,
 # June-2026 stays the committed basis and this job stays manual-only.
 #
-# BEFORE this can be flipped to scheduled (add a cron here), ERP still owes:
-#   1. daily 1y short-end feed  (nominal-1y minus held 1y breakeven)
-#   2. S&P 500 price deflator confirmed for norm_ey (normalized_X4 / real_price_close)
-#   3. the daily RUNNER wrapper: build_erp_daily.py as posted is a LIBRARY + local
-#      self-test only. It has no daily-input fetch and does not WRITE the output
-#      contract (history/TODAY_forward_curve_latest.csv + history/ERP_effective_latest.csv).
-#      That writer must be added before a scheduled run produces anything.
-#   4. gate fixtures in-repo: the __main__ self-test reads /tmp/shiller/shiller.csv
-#      and TODAY_forward_curve_2026-06.csv, neither of which is committed. The gate
-#      step below is fail-closed and will stay RED until those land — by design.
+# DELIVERED (ERP, 2026-07-23):
+#   - build_erp_daily.py  : v4 library + HERMETIC self-test gate (no external files).
+#   - run_erp_daily.py    : runner/writer -> history/TODAY_forward_curve_latest.csv
+#                           + history/ERP_effective_latest.csv (auto-latest overlay consumes them).
+#                           EXEC fix: effective row rounded to 4dp so eff_coe == eff_tips_ry+eff_erp
+#                           within the overlay's TOL_IDENT (1e-3); 3dp tripped the hard-fail.
+#   - ERP_HELD_STATE_2026-06.json : monthly-anchored slow state (vs, fey/D, cost, corp_prem,
+#                           breakeven1y, cpi_factor, normalized_X4).
 #
-# When all four are in and the gate is green, ERP will confirm and EXEC adds the
-# cron + retunes the staleness guard (45d -> ~3 business days) in the SAME change.
+# STILL REQUIRED before flipping to scheduled (add a cron here):
+#   1. Wire run_erp_daily.fetch_daily_inputs() to the repo data step — it must return
+#      (reals{5,10,20,30} real par pct, nominal_1y pct, sp_close). Sources are in the
+#      held-state JSON ['sources']. Everything below fetch is ERP-owned/deterministic.
+#   2. Point the scheduled daily job's writer at run_erp_daily.run(...) and commit the two
+#      _latest files (needs contents:write, mirroring weekly.yml).
+#   3. ERP dispatches a live run, eyeballs it, posts the green.
+#   4. THEN EXEC adds the cron + retunes the staleness guard (45d -> ~3 business days) in
+#      the SAME change. Not before — while June is the basis the 45d warning is correct.
 
 on:
   workflow_dispatch: {}
@@ -42,6 +47,8 @@ jobs:
       - name: Smoke — v4 library loads (fail-closed on import/precompute)
         run: python -c "import build_erp_daily as b; print('build_erp_daily import OK; params locked, TMAX=%d' % b.TMAX)"
 
-      - name: Acceptance gate (fail-closed; reproduces committed June to <1bp)
-        # Requires the two fixtures noted in the header. RED until ERP commits them.
+      - name: Acceptance gate — hermetic self-test (reproduces committed June <1bp, no external files)
         run: python build_erp_daily.py
+
+      - name: Writer <-> overlay contract (runner writes _latest; apply_erp_overlay readers validate identities)
+        run: python tests/test_erp_daily_writer.py
