@@ -33,11 +33,30 @@ def run(asof_date, reals_5_10_20_30, nominal_1y, sp_close, state, outdir="."):
     write_outputs(asof_date, r, outdir)
     return r
 
-def fetch_daily_inputs(asof_date):
-    """ADAPTER — EXEC wires this to the repo's data step. Must return:
-       (reals_5_10_20_30: {5,10,20,30 -> real par yield pct}, nominal_1y: pct, sp_close: index level).
-       Sources: Treasury Daily Par REAL Yield Curve (5/7/10/20/30), Treasury Daily Par Yield Curve (1Y), S&P 500 close."""
-    raise NotImplementedError("wire to repo data step; see ERP_HELD_STATE_*.json['sources']")
+SP500_SERIES = "SP500"   # FRED S&P 500 index level (daily close). ERP: confirm on the live eyeball.
+
+def fetch_daily_inputs(asof_date, api_key=None):
+    """ADAPTER — wired to the repo's FRED data step (asfp.datasources). Returns
+       (reals_5_10_20_30: {5,10,20,30 -> real par yield pct}, nominal_1y: pct, sp_close: index level),
+       each the latest observation on/before asof_date.
+       Sources (per ERP_HELD_STATE_*.json['sources']):
+         real par 5/10/20/30 -> FRED DFII5/DFII10/DFII20/DFII30 (Treasury Daily Par REAL Yield Curve),
+         nominal 1y          -> FRED DGS1 (Treasury Daily Par Yield Curve, 1Y),
+         S&P 500 close        -> FRED SP500.
+       Import is function-local so the hermetic gate/tests stay fully offline."""
+    import os
+    from asfp import datasources as ds
+    key = api_key or os.environ.get("FRED_API_KEY")
+    if not key:
+        raise RuntimeError("FRED_API_KEY not set (required for the live daily fetch)")
+    reals = {k: ds.fetch_fred_asof(key, ds.DFII_MAP[k], asof_date)[0] for k in (5, 10, 20, 30)}
+    nominal_1y = ds.fetch_fred_asof(key, ds.DGS_MAP[1], asof_date)[0]
+    sp_close = ds.fetch_fred_asof(key, SP500_SERIES, asof_date)[0]
+    missing = [n for n, v in [("nominal_1y", nominal_1y), ("sp_close", sp_close)] if v is None]
+    missing += [f"real_{k}y" for k, v in reals.items() if v is None]
+    if missing:
+        raise RuntimeError(f"FRED returned no value for {missing} as of {asof_date}")
+    return reals, nominal_1y, sp_close
 
 if __name__=="__main__":
     # SMOKE: reproduce June-2026 from committed anchors + June daily inputs, and write the two files.

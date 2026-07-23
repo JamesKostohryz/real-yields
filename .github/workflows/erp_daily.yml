@@ -2,31 +2,35 @@ name: erp-daily-close (DISPATCH-ONLY — not yet scheduled)
 
 # STATUS: staged, NOT live. There is deliberately NO `schedule:` trigger.
 # James's 2026-07-22 decision moves the ERP "today" curve from a frozen monthly
-# vintage to a daily-close rebuild (build_erp_daily.py, v4 engine; run_erp_daily.py
-# writer). Until the daily data feed is wired and ERP posts a GREEN live run,
-# June-2026 stays the committed basis and this job stays manual-only.
+# vintage to a daily-close rebuild (build_erp_daily.py v4 engine; run_erp_daily.py writer).
+# June-2026 stays the committed basis until ERP eyeballs a live run and posts GREEN.
 #
-# DELIVERED (ERP, 2026-07-23):
-#   - build_erp_daily.py  : v4 library + HERMETIC self-test gate (no external files).
-#   - run_erp_daily.py    : runner/writer -> history/TODAY_forward_curve_latest.csv
-#                           + history/ERP_effective_latest.csv (auto-latest overlay consumes them).
-#                           EXEC fix: effective row rounded to 4dp so eff_coe == eff_tips_ry+eff_erp
-#                           within the overlay's TOL_IDENT (1e-3); 3dp tripped the hard-fail.
-#   - ERP_HELD_STATE_2026-06.json : monthly-anchored slow state (vs, fey/D, cost, corp_prem,
-#                           breakeven1y, cpi_factor, normalized_X4).
+# DELIVERED (ERP 2026-07-23 + EXEC wiring):
+#   - build_erp_daily.py           : v4 library + HERMETIC self-test gate (no external files).
+#   - run_erp_daily.py             : runner/writer -> history/TODAY_forward_curve_latest.csv +
+#                                    history/ERP_effective_latest.csv (auto-latest overlay consumes them).
+#                                    fetch_daily_inputs() WIRED to FRED (DFII5/10/20/30, DGS1, SP500)
+#                                    via asfp.datasources.fetch_fred_asof. EXEC fix: effective row 4dp so
+#                                    eff_coe == eff_tips_ry+eff_erp within overlay TOL_IDENT (1e-3).
+#   - ERP_HELD_STATE_2026-06.json  : monthly-anchored slow state.
+#   - tests/test_erp_daily_writer.py : hermetic writer<->overlay contract test.
 #
-# STILL REQUIRED before flipping to scheduled (add a cron here):
-#   1. Wire run_erp_daily.fetch_daily_inputs() to the repo data step — it must return
-#      (reals{5,10,20,30} real par pct, nominal_1y pct, sp_close). Sources are in the
-#      held-state JSON ['sources']. Everything below fetch is ERP-owned/deterministic.
-#   2. Point the scheduled daily job's writer at run_erp_daily.run(...) and commit the two
-#      _latest files (needs contents:write, mirroring weekly.yml).
-#   3. ERP dispatches a live run, eyeballs it, posts the green.
-#   4. THEN EXEC adds the cron + retunes the staleness guard (45d -> ~3 business days) in
-#      the SAME change. Not before — while June is the basis the 45d warning is correct.
+# NORMAL DISPATCH runs the hermetic gate + contract test (offline, always green when healthy).
+# LIVE PREVIEW (dispatch input live_preview=true) does a READ-ONLY live FRED fetch + build and prints
+# the result for ERP to eyeball. It commits NOTHING.
+#
+# STILL REQUIRED to flip to scheduled (a later change):
+#   1. ERP dispatches the live preview, confirms the fetched inputs + effective, posts the green.
+#   2. EXEC adds a `schedule:` cron + a contents:write writer step that commits the two _latest files
+#      (mirroring weekly.yml), AND retunes the staleness guard 45d -> ~3 business days IN THE SAME change.
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      live_preview:
+        description: "READ-ONLY live FRED fetch preview for ERP eyeball (no commit)."
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -52,3 +56,30 @@ jobs:
 
       - name: Writer <-> overlay contract (runner writes _latest; apply_erp_overlay readers validate identities)
         run: python tests/test_erp_daily_writer.py
+
+      - name: Live preview (READ-ONLY; ERP eyeball; no commit)
+        if: ${{ inputs.live_preview == 'true' }}
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: |
+          python - <<'PY'
+          import json, tempfile, datetime, importlib.util
+          import run_erp_daily as rr
+          state = json.load(open("ERP_HELD_STATE_2026-06.json"))
+          asof = datetime.date.today().isoformat()
+          reals, nom, sp = rr.fetch_daily_inputs(asof)
+          d = tempfile.mkdtemp()
+          r = rr.run(asof, reals, nominal_1y=nom, sp_close=sp, state=state, outdir=d)
+          print("FETCH :", {"asof": asof, "reals": reals, "nominal_1y": nom, "sp_close": sp})
+          print("EFFECT: tips=%.3f erp=%.3f coe=%.3f dur=%.2f" % (r["eff_tips"], r["eff_erp"], r["eff_coe"], r["D_out"]))
+          spec = importlib.util.spec_from_file_location("ovl", "apply_erp_overlay.py")
+          ovl = importlib.util.module_from_spec(spec)
+          try:
+              spec.loader.exec_module(ovl)
+          except SystemExit:
+              pass
+          c = ovl.load_curve(d + "/TODAY_forward_curve_latest.csv")
+          e = ovl.load_effective(d + "/ERP_effective_latest.csv")
+          print("OVERLAY OK: curve tenors=%d, eff=%s" % (len(c), e))
+          print("NOTE: read-only preview; nothing committed. June stays the basis until ERP posts green + cron is added.")
+          PY
