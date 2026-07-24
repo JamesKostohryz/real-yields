@@ -1,0 +1,77 @@
+name: coe-history (ticker COE)
+
+# Historical cost-of-equity by ticker entry (James 2026-07-23). Company-agnostic:
+# the only per-ticker input is that ticker's monthly price history (EODHD). The market legs
+# (real_yield + market_erp) and expected inflation are shared/committed; a single universal
+# price-of-idiosyncratic-risk prices the idio leg, so a never-seen ticker runs unattended.
+#
+#   gate    : ALWAYS runs. Hermetic offline self-test (committed compact AAPL fixture reproduces
+#             the pilot 8.15 real / 11.50 nominal to <0.05). Fail-closed; publishing depends on it.
+#   run     : needs gate. workflow_dispatch with a ticker -> fetch EODHD monthly adj close, build the
+#             monthly + annual COE series, commit outputs/coe_history_<T>.csv (+ _annual.csv).
+#             Fail-closed: fetch raises if EODHD_API_KEY unset or the symbol returns no prices.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "coe_history.py"
+      - "run_coe_history.py"
+      - "tests/fixtures/coe_history/**"
+      - ".github/workflows/coe_history.yml"
+  workflow_dispatch:
+    inputs:
+      ticker:
+        description: "Ticker to run (e.g. AAPL, MSFT). Blank = self-test only."
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coe-history-${{ github.event.inputs.ticker }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Hermetic self-test (offline; reproduces AAPL pilot 8.15/11.50)
+        run: python -m run_coe_history --selftest
+
+  run:
+    needs: gate
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.ticker != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Build COE history for the ticker (fail-closed on fetch)
+        env:
+          EODHD_API_KEY: ${{ secrets.EODHD_API_KEY }}
+          TICKER: ${{ inputs.ticker }}
+        run: python -m run_coe_history "${TICKER}"
+      - name: Commit outputs
+        env:
+          TICKER: ${{ inputs.ticker }}
+        run: |
+          git config user.name "asfp-bot"
+          git config user.email "asfp-bot@users.noreply.github.com"
+          T=$(echo "${TICKER}" | tr '[:lower:]' '[:upper:]')
+          git add "outputs/coe_history_${T}.csv" "outputs/coe_history_${T}_annual.csv"
+          git commit -m "coe-history: ${T} monthly + annual COE $(date -u +%F)" || { echo "no changes"; exit 0; }
+          git pull --rebase --autostash origin main || true
+          git push
