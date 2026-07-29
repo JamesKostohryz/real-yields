@@ -135,8 +135,19 @@ def assemble(ticker, cg, real_rf, market_erp, vix, fund, bonds=None,
                                       coe_df["credit_relative"], coe_df["idiosyncratic"])
     coe_annual = pd.DataFrame({"tenor": grid, **ann}).set_index("tenor")
 
+    # market value of debt. Bonded: book debt marked to the mean traded price of the issuer's
+    # own bond curve (mvd_basis=book-scaled). BONDLESS: no traded bonds to mark, so par-mark the
+    # reported book total debt (mvd_basis=book-par) — bank/term/securitization debt sits near par,
+    # so book ~= market. Mirrors the synthetic-cod bondless logic (COCKPIT 2026-07-29).
+    mvd = summ.get("market_value_debt")
+    mvd_basis = "book-scaled" if mvd is not None else None
+    if mvd is None:
+        bd = fund.get("book_total_debt")
+        if bd is not None and float(bd) > 0:
+            mvd = float(bd)
+            mvd_basis = "book-par"
     meta = dict(ticker=ticker, **cmeta, **emeta,
-                market_value_of_debt=summ.get("market_value_debt"),
+                market_value_of_debt=mvd, mvd_basis=mvd_basis,
                 portfolio_ytm=summ.get("portfolio_ytm"),
                 wavg_mod_duration=summ.get("wavg_mod_duration"),
                 wavg_coupon=summ.get("wavg_coupon"),
@@ -171,7 +182,7 @@ def write_outputs(outdir, ticker, tables, meta, fund):
     # curve -- an approximation, NOT issue-level truth. Tag it so no downstream
     # consumer mistakes it for the latter. Upgrade path: a real 10-K/XBRL schedule.
     if meta.get("market_value_of_debt") is not None:
-        rows.append({"field": "mvd_basis", "value": "book-scaled"})
+        rows.append({"field": "mvd_basis", "value": meta.get("mvd_basis") or "book-scaled"})
     pd.DataFrame(rows).to_csv(f"{outdir}/company_{t}.csv", index=False)
     return [f"cod_{t}.csv", f"cod_{t}_annual.csv", f"coe_{t}.csv",
             f"coe_{t}_annual.csv", f"company_{t}.csv"]

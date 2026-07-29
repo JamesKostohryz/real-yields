@@ -119,6 +119,7 @@ def fetch_company(ticker, avg_correlation=0.35):
     equity_vol_ts = fetch_equity_vol_ts(tk, price, fallback_vol=equity_vol)
 
     return dict(ticker=ticker, price=price, **lev,
+                book_total_debt=total_debt,   # reported book debt (par mark for bondless MVD)
                 equity_vol=equity_vol, sigma_V=sigma_V,
                 equity_vol_ts=equity_vol_ts,
                 avg_correlation=avg_correlation)
