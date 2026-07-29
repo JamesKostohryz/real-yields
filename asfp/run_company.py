@@ -272,9 +272,11 @@ def main():
     print(f"  rating={meta['rating']} offset=x{meta['offset']:.3f} "
           f"k={meta['k']:.2f} idio_anchor={meta['idio_anchor']:.2f}%")
     if meta.get("market_value_of_debt"):
+        _pytm = meta.get("portfolio_ytm"); _mdur = meta.get("wavg_mod_duration")
+        _ytm_s = f"{_pytm*100:.2f}%" if _pytm is not None else "n/a"
+        _dur_s = f"{_mdur:.1f}y" if _mdur is not None else "n/a"
         print(f"  MV(debt)=${meta['market_value_of_debt']/1e9:.1f}B "
-              f"portYTM={meta['portfolio_ytm']*100:.2f}% "
-              f"modDur={meta['wavg_mod_duration']:.1f}y")
+              f"portYTM={_ytm_s} modDur={_dur_s}  ({meta.get('mvd_basis','')})")
 
 
 if __name__ == "__main__":
