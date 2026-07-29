@@ -1,8 +1,8 @@
 field,value
 ticker,POOL
-generated_utc,2026-07-29 01:43 UTC
-generated_iso,2026-07-29T01:43:24Z
+generated_utc,2026-07-29 02:49 UTC
+generated_iso,2026-07-29T02:49:34Z
 bonds_source,none (pure-rating)
 n_bonds,0
-run_id,30414853748
-git_sha,744ef94
+run_id,30417845451
+git_sha,8a4eab9

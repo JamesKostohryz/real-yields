@@ -8,5 +8,7 @@ lambda0,0.20643855572908673
 equity_vol,0.46376573837280277
 sigma_V,0.3844089167827825
 avg_correlation,0.35
+market_value_of_debt,1535031000.0
 rating,BBB
 offset,1.0
+mvd_basis,book-par
