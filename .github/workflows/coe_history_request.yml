@@ -1,0 +1,56 @@
+name: coe-history (git-request)
+
+# Git-triggered twin of coe_history.yml's dispatch job. Purpose: a workspace that can push
+# over git but cannot reach the GitHub REST API (so it cannot press "Run workflow") can still
+# run a ticker's COE history by committing a request file. Fires ONLY when
+# requests/coe-history.json changes on main. Additive — the original coe_history.yml is untouched.
+#
+# Request file shape:  { "ticker": "T", "nonce": "<unique string to force a re-run>" }
+# Change the nonce to re-run the same ticker (git needs a content change to trigger).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "requests/coe-history.json"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: coe-history-request
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Read requested ticker
+        id: req
+        run: |
+          T=$(python -c "import json,sys; d=json.load(open('requests/coe-history.json')); sys.stdout.write(str(d.get('ticker','')).strip().upper())")
+          if [ -z "$T" ]; then echo "::error::requests/coe-history.json has no ticker"; exit 1; fi
+          echo "ticker=$T" >> "$GITHUB_OUTPUT"
+          echo "Requested ticker: $T"
+      - name: Self-test gate (offline, fail-closed)
+        run: python -m run_coe_history --selftest
+      - name: Build COE history for the ticker (fail-closed on fetch)
+        env:
+          EODHD_API_KEY: ${{ secrets.EODHD_API_KEY }}
+          TICKER: ${{ steps.req.outputs.ticker }}
+        run: python -m run_coe_history "${TICKER}"
+      - name: Commit outputs
+        run: |
+          git config user.name "asfp-bot"
+          git config user.email "asfp-bot@users.noreply.github.com"
+          T="${{ steps.req.outputs.ticker }}"
+          git add "outputs/coe_history_${T}.csv" "outputs/coe_history_${T}_annual.csv"
+          git commit -m "coe-history (git-request): ${T} $(date -u +%F)" || { echo "no changes"; exit 0; }
+          git pull --rebase --autostash origin main || true
+          git push
