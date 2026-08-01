@@ -1,0 +1,8 @@
+field,value
+ticker,MRK
+generated_utc,2026-08-01 23:40 UTC
+generated_iso,2026-08-01T23:40:00Z
+bonds_source,committed-file
+n_bonds,5
+run_id,30723751001
+git_sha,7a373af
