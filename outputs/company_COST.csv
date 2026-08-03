@@ -1,0 +1,14 @@
+field,value
+ticker,COST
+price,950.5599975585938
+market_equity,421553210847.5281
+nfo,-5988000000.0
+L,-0.014409290873477405
+lambda0,-0.01420461248050084
+equity_vol,0.2611615632629395
+sigma_V,0.26492471619296726
+avg_correlation,0.35
+market_value_of_debt,8173000000.0
+rating,BBB
+offset,1.0
+mvd_basis,book-par
