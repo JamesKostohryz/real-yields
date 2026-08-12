@@ -170,6 +170,24 @@ def overlay_coe_termstructure(path, curve, mapping):
     return f"{os.path.basename(path)}: rf+market_erp <- forward curve, idio kept"
 
 
+# Task 5 (AEG-ERP-Collapse-Function-AUDIT-2026-08-12.md section 5): real_rf/market_erp
+# below come from the Decision-B state-machine reading (duration-weighted average of
+# SPOT yields, held flat past year 30 -- ERP_effective_latest.csv). idiosyncratic comes
+# from a cash-flow-PV-weighted YTM collapse of the SAME-DAY forward curve (collapse_rate,
+# asfp/run_company.py) -- a different methodology, on a different curve representation
+# (spot vs forward), with its own cash-flow profile. Measured 2026-08-12: methodology
+# alone (holding the curve basis fixed) accounts for ~15-19bp of real_rf/real_coe;
+# state-basis timing (fey_in vs fey_out) for only ~1-3bp. Not a bug -- both bases are
+# decided (ERP 1826 / Decision B for the former, this collapse work for the latter) --
+# but real_coe/company_erp below ADD across methodologies without saying so unless this
+# note is attached. See AEG-ERP-TASK5-LANDED-2026-08-12.md for the full decomposition.
+METHODOLOGY_NOTE = (
+    "real_rf/market_erp: Decision-B state-machine (duration-weighted spot average, "
+    "ERP_effective_latest.csv). idiosyncratic: cash-flow-PV YTM collapse of the same-day "
+    "forward curve (different methodology, different curve representation). real_coe/"
+    "company_erp add the two together -- see AEG-ERP-TASK5-LANDED-2026-08-12.md.")
+
+
 def overlay_effective(ticker, eff, mapping):
     """Percent file is authoritative (ERP 1826: keep percent-pinned); decimal derived."""
     out = []
@@ -188,12 +206,16 @@ def overlay_effective(ticker, eff, mapping):
     rf_pct, erp_pct = float(d["real_rf"]), float(d["market_erp"])
     d["company_erp"] = f"{erp_pct + idio_pct:.4f}"
     d["real_coe"] = f"{rf_pct + erp_pct + idio_pct:.4f}"
+    d["methodology_note"] = METHODOLOGY_NOTE
     for r in rows:
         r["value_pct"] = d[r["field"]]
+    if "methodology_note" not in [r["field"] for r in rows]:
+        rows.append({"field": "methodology_note", "value_pct": METHODOLOGY_NOTE})
     _write(ppath, fn, rows)
     if abs(rf_pct + erp_pct + idio_pct - float(d["real_coe"])) > TOL_PCT:
         raise OverlayError(f"{ppath}: percent decomposition broke")
-    out.append(f"coe_v2_{ticker}_effective: {rf_pct}+{erp_pct}+{idio_pct} = {d['real_coe']}")
+    out.append(f"coe_v2_{ticker}_effective: {rf_pct}+{erp_pct}+{idio_pct} = {d['real_coe']} "
+               f"(mixed-methodology -- see methodology_note field)")
 
     if os.path.exists(apath):
         rf = math.exp(rf_pct / 100) - 1
