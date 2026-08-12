@@ -5,7 +5,7 @@
   "fey_in": 6.02,
   "D_in": 24.72,
   "cost": 0.503,
-  "corp_prem": 1.8,
+  "corp_prem": 1.02,
   "breakeven1y": 2.76,
   "cpi_factor": 0.99844,
   "normalized_X4": 234.1507,
@@ -15,5 +15,6 @@
     "one_year_real_rule": "real_1y = nominal_1y - breakeven1y (breakeven held from the monthly master vintage)",
     "norm_ey_rule": "norm_ey = 100 * normalized_X4 * cpi_factor / sp_close  (SP500 normalized earnings LEVEL / real price; price is daily)",
     "sp_close": "S&P 500 index close (nominal)"
-  }
+  },
+  "corp_prem_derivation": "Corrected 2026-08-12 (AEG-ERP-TASK6-BUILD-SPEC / James's follow-up instruction). Was a static 1.8 with no documented derivation and no visible tie to the decided design. Now = asfp.volsurface.floor_from_credit_grid(cg, wedge=0.50) on the live credit grid (outputs/market_credit_latest.csv, 2026-08-12 vintage): bond risk premium 0.52% (30y IG index spread 1.00%, less 0.18% expected loss [lgd=0.60 x hazard=0.30], less 0.30% liquidity haircut) plus 0.50% cost premium = 1.02% total. Matches the decided-design METHOD (corporate credit risk premium + cost premium, per AEG-ERP-Plateau-Presets-And-Glide-SPEC-2026-08-12.md); does not match its 1.26% EXAMPLE figure, which was a hand calc from HQM corporate yield less nominal Treasury on a different day -- a ~24bp difference in the credit-spread reading itself, not a methodology disagreement. VERIFIED NON-BINDING both before and after this change: June 2026's own implied erp_risk (3.384) and 2026-08-12's (3.422) both sit far above either 1.8 or 1.02, so this correction does not move any published number retroactively or on the day it landed -- it closes a latent risk (the wrong floor silently taking over in a future selloff), not an active one. Re-derive at each monthly re-anchor rather than holding this value indefinitely -- the live credit spread moves."
 }

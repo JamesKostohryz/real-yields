@@ -198,7 +198,13 @@ def main():
             # This is the "futures options" reach that keeps the ERP options-driven past 1y.
             extra_ts = list(vs.fetch_index_vol_ts_yf())
             extra_ts += list(vs.fetch_cme_settlement_vols())
-            floor_v2 = vs.floor_from_credit_grid(cg, wedge=1.0)
+            # wedge corrected 2026-08-12: 1.0 didn't match the decided design (a 0.50%
+            # "today's cost premium" -- AEG-ERP-Plateau-Presets-And-Glide-SPEC-2026-08-12.md
+            # and AEG-ERP-TASK6-BUILD-SPEC-2026-08-12.md section 3). This floor feeds
+            # market_erp_v2_latest.csv -> the coe_v2 idiosyncratic leg (the one field the
+            # Decision-B overlay never overwrites -- see Task 5), so it is a real, surviving
+            # input, not dead code.
+            floor_v2 = vs.floor_from_credit_grid(cg, wedge=0.50)
             me2, vol_ts = vs.build_v2_market_erp(GRID_V2, vols, floor_v2,
                                                  converge_year=30.0, extra_ts=extra_ts)
             me2.round(4).to_csv(f"{OUTDIR}/market_erp_v2_latest.csv")
