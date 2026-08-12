@@ -164,16 +164,45 @@ def main():
 
             # --- EFFECTIVE (collapsed) ERP: the whole term structure summarized as one
             # cash-flow-PV-weighted rate, the equity analogue of a bond's YTM. Collapse
-            # nested cumulative curves so the effective pieces still add up. ---
-            from . import collapse as col
-            growth = float(os.environ.get("COE_CF_GROWTH", "2.0"))    # real CF growth for the weights
+            # nested cumulative curves so the effective pieces still add up.
+            #
+            # WEIGHTS (Task 2, AEG-ERP-Collapse-Function-AUDIT-2026-08-12.md section 5):
+            # prefer the company's OWN real forecast distribution stream (dps_real, from
+            # aeg-valuation's published <TICKER>_aeg_schedule.csv) over the synthetic
+            # (1+growth/100)^t profile. This job runs BEFORE any forecast necessarily
+            # exists for a name (a brand-new ticker has no schedule yet), and some
+            # implied-distribution paths are not usable as collapse weights (see
+            # aeg_schedule_feed.py docstring) — both are expected, not exceptional, so
+            # the synthetic growth path stays as a documented, WARNED fallback rather
+            # than being retired.
+            from . import collapse as col, aeg_schedule_feed as asf
+            growth = float(os.environ.get("COE_CF_GROWTH", "2.0"))    # fallback CF growth only
             coe_curve = coe2["real_coe"].to_numpy()
             rf_curve = coe2["real_rf"].to_numpy()
             rfmkt_curve = rf_curve + coe2["market_erp"].to_numpy()
-            eff_coe = col.collapse_rate(GV, coe_curve, growth=growth)
-            eff_rf = col.collapse_rate(GV, rf_curve, growth=growth)
-            eff_rfmkt = col.collapse_rate(GV, rfmkt_curve, growth=growth)
+            try:
+                sched_grid, sched_cf = asf.fetch_distribution_profile(ticker)
+                n = len(sched_grid)
+                grid_used = np.asarray(sched_grid, dtype=float)
+                eff_coe = col.collapse_rate(grid_used, coe_curve[:n], cashflows=sched_cf)
+                eff_rf = col.collapse_rate(grid_used, rf_curve[:n], cashflows=sched_cf)
+                eff_rfmkt = col.collapse_rate(grid_used, rfmkt_curve[:n], cashflows=sched_cf)
+                profile_basis = f"{ticker}_aeg_schedule dps_real, {n}y"
+                print(f"  coe v2 EFFECTIVE profile: real distribution stream "
+                      f"({ticker}_aeg_schedule.csv, {n} years)")
+            except asf.ScheduleFetchError as e:
+                grid_used = GV
+                eff_coe = col.collapse_rate(grid_used, coe_curve, growth=growth)
+                eff_rf = col.collapse_rate(grid_used, rf_curve, growth=growth)
+                eff_rfmkt = col.collapse_rate(grid_used, rfmkt_curve, growth=growth)
+                profile_basis = f"synthetic growth={growth}%/yr fallback"
+                print(f"  coe v2 EFFECTIVE profile: WARNING no usable real distribution "
+                      f"stream for {ticker} ({e}); falling back to synthetic "
+                      f"growth={growth}%/yr weights")
             eff_mkt = eff_rfmkt - eff_rf
+            # eff_company (= eff_coe - eff_rf) and eff_idio below are DIFFERENCES of two
+            # independently-collapsed repricing rates, like a bond spread quoted as one
+            # yield minus another — not themselves a repricing rate. See Task 2 spec.
             eff_company = eff_coe - eff_rf
             eff_idio = eff_company - eff_mkt
             eff_rows = [
@@ -183,6 +212,7 @@ def main():
                 ("company_erp", round(eff_company, 4)),
                 ("real_coe", round(eff_coe, 4)),
                 ("cf_growth", round(growth, 3)),
+                ("profile_basis", profile_basis),
             ]
             pd.DataFrame(eff_rows, columns=["field", "value_pct"]).to_csv(
                 f"{OUTDIR}/coe_v2_{ticker}_effective.csv", index=False)
