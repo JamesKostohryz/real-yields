@@ -34,3 +34,58 @@ def test_tail_bump_barely_moves_the_single_rate():
     flat = collapse.collapse_rate(GRID, np.full_like(GRID, 6.0), growth=0.0)
     bumped = collapse.collapse_rate(GRID, 6.0 + 12.0 * (GRID > 40), growth=0.0)
     assert bumped - flat < 0.6                          # < 60 bp despite a +12pp tail
+
+
+def test_bootstrap_spot_reads_the_published_curve(tmp_path):
+    import csv
+    curve = tmp_path / "curve.csv"
+    with open(curve, "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["tenor", "fwd_real_yield", "fwd_erp", "fwd_coe",
+                    "spot_real_yield", "spot_erp", "spot_coe"])
+        w.writerow([30, 3.61, 1.92, 5.53, 3.00, 3.3355, 6.3355])
+    vintage = tmp_path / "vintage.csv"
+    with open(vintage, "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["vintage", "date", "eff_tips_ry", "eff_erp", "eff_coe", "duration"])
+        w.writerow(["2026-08-12", "2026-08-12", 2.563, 3.9252, 6.4882, 23.82])
+    value, date = collapse.bootstrap_spot(30, curve_path=str(curve), vintage_path=str(vintage))
+    assert abs(value - 3.3355) < 1e-9
+    assert date == "2026-08-12"
+
+
+def test_bootstrap_spot_missing_tenor_raises(tmp_path):
+    import csv
+    curve = tmp_path / "curve.csv"
+    with open(curve, "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["tenor", "spot_erp"])
+        w.writerow([1, 3.9])
+    try:
+        collapse.bootstrap_spot(30, curve_path=str(curve), vintage_path=str(tmp_path / "nope.csv"))
+        assert False, "expected ValueError"
+    except ValueError:
+        pass
+
+
+def test_bootstrap_spot_missing_curve_file_raises(tmp_path):
+    try:
+        collapse.bootstrap_spot(30, curve_path=str(tmp_path / "nope.csv"),
+                                vintage_path=str(tmp_path / "also_nope.csv"))
+        assert False, "expected FileNotFoundError"
+    except FileNotFoundError:
+        pass
+
+
+def test_bootstrap_spot_vintage_is_best_effort(tmp_path):
+    # vintage file missing -> still returns the value, with vintage=None
+    import csv
+    curve = tmp_path / "curve.csv"
+    with open(curve, "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["tenor", "spot_erp"])
+        w.writerow([30, 3.3355])
+    value, date = collapse.bootstrap_spot(
+        30, curve_path=str(curve), vintage_path=str(tmp_path / "nope.csv"))
+    assert abs(value - 3.3355) < 1e-9
+    assert date is None

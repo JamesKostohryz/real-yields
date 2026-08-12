@@ -217,6 +217,26 @@ def main():
     except Exception as e:
         print(f"credit/erp grid skipped (non-fatal): {e}")
 
+    # --- non-fatal: the PARAMETER-FREE market-level effective ERP -- Task 3 (AEG-
+    # ERP-Collapse-Function-AUDIT-2026-08-12.md section 5, "For any market-level
+    # figure with no forecast behind it, publish the parameter-free bootstrap
+    # instead"). No growth assumption, no cash-flow profile: the live spot ERP,
+    # already bootstrapped from the one-year forwards, at a few standard tenors.
+    # Unconditional on the live-options skew diagnostics below, which can fail on a
+    # bad yfinance pull -- this reading should still be there when they do. ---
+    try:
+        from . import collapse as col_boot
+        boot_rows = []
+        for t in (1, 5, 10, 20, 30):
+            v, vintage = col_boot.bootstrap_spot(t)
+            boot_rows.append({"tenor": t, "spot_erp": v, "vintage": vintage})
+        pd.DataFrame(boot_rows).to_csv(f"{OUTDIR}/erp_bootstrap_latest.csv", index=False)
+        r30 = next(r for r in boot_rows if r["tenor"] == 30)
+        print(f"market ERP bootstrap (parameter-free, disclosure figure): "
+              f"{r30['spot_erp']:.4f}% at 30y, as of {r30['vintage']}")
+    except Exception as e:
+        print(f"market ERP bootstrap skipped (non-fatal): {e}")
+
     # --- non-fatal DIAGNOSTIC: index skew-priced ERP (corridor down/up variance).
     # Pure measurement written to a new file; nothing in the model consumes it yet. ---
     try:
@@ -250,7 +270,14 @@ def main():
             curve = ee.skew_erp_curve(smiles, GS, phi=1.0)
             curve.round(4).to_csv(f"{OUTDIR}/market_skew_erp.csv")
             # retired erp_engine.effective_erp() 2026-08-12 (wrong collapse: averaged
-            # rates, discounted by the ERP path alone). True YTM collapse instead:
+            # rates, discounted by the ERP path alone). True YTM collapse instead --
+            # BUT this is a growth=2.0 SYNTHETIC-profile collapse, kept only so the
+            # skew-priced and variance-priced readings compare on equal footing. It is
+            # a diagnostic, not a disclosure figure: there is no company (and so no
+            # real cash-flow profile) behind an index-level number. Per Task 3 (AEG-
+            # ERP-Collapse-Function-AUDIT-2026-08-12.md section 5), the figure to
+            # DISCLOSE for a market-level effective ERP is the parameter-free
+            # bootstrap published above (erp_bootstrap_latest.csv), not this collapse.
             eff = col.collapse_rate(GS, curve["erp"].to_numpy(), growth=2.0)
             rs = comp.realized_skew("^GSPC")           # physical skew for the phi dial
             phi_est = (rs["corridor"] / (curve["corridor_skew"].mean())
@@ -259,7 +286,8 @@ def main():
                 pd.DataFrame([{"field": k, "value": v} for k, v in rs.items()]
                              + [{"field": "phi_estimate", "value": round(phi_est, 3) if phi_est else None}]
                              ).to_csv(f"{OUTDIR}/market_skew_realized.csv", index=False)
-            print(f"skew-ERP (index): tenors={sorted(smiles)} eff={eff:.2f}% "
+            print(f"skew-ERP (index) DIAGNOSTIC (growth=2.0, not for disclosure): "
+                  f"tenors={sorted(smiles)} eff={eff:.2f}% "
                   f"1y={curve['erp'].loc[1]:.2f} 5y={curve['erp'].loc[5]:.2f}"
                   + (f"  phi_est={phi_est:.2f}" if phi_est else ""))
     except Exception as e:

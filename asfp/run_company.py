@@ -233,6 +233,9 @@ def main():
                   f"coe(1y)={coe2['real_coe'].loc[1]:.2f}% coe(100y)={coe2['real_coe'].loc[100]:.2f}%")
             print(f"  coe v2 EFFECTIVE: real_coe={eff_coe:.2f}%  company_erp={eff_company:.2f}%  "
                   f"(mkt={eff_mkt:.2f} + idio={eff_idio:.2f}) over rf={eff_rf:.2f}%")
+            # Task 3 disclosure line: effective rate + its profile, always together
+            # (e.g. "effective ERP 3.35%, PEP base-case distribution stream, 30y").
+            print(f"  coe v2 EFFECTIVE ERP {eff_company:.2f}%, {ticker}, {profile_basis}")
     except Exception as e:
         print(f"  coe v2 skipped (non-fatal): {e}")
 

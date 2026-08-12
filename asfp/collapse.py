@@ -60,3 +60,44 @@ def collapse_coe_and_erp(grid, coe_pct, rf_pct, cashflows=None, growth=2.0):
     coe1 = collapse_rate(grid, coe_pct, cashflows, growth)
     rf1 = collapse_rate(grid, rf_pct, cashflows, growth)
     return coe1, rf1, coe1 - rf1
+
+
+def bootstrap_spot(tenor, *, curve_path="history/TODAY_forward_curve_latest.csv",
+                   vintage_path="history/ERP_effective_latest.csv", field="spot_erp"):
+    """The PARAMETER-FREE reading for a market-level figure with no company forecast
+    behind it (object (d) in AEG-ERP-Collapse-Function-AUDIT-2026-08-12.md section 3;
+    Task 2 spec section 5). This is NOT a collapse -- no cash-flow profile, no growth
+    assumption, nothing to choose. It is just the published SPOT rate at `tenor`,
+    already bootstrapped from the one-year forwards (verified to machine precision
+    against a from-scratch bootstrap in the audit, section 2).
+
+    Use this instead of running collapse_rate() with a synthetic growth profile
+    whenever there is no company (and therefore no real cash-flow profile) behind the
+    number -- e.g. quoting "the market's effective ERP" on its own. A per-company
+    effective rate still belongs through collapse_rate() with that company's own
+    profile (see asfp/run_company.py and aeg_schedule_feed.py).
+
+    Returns (value, vintage_date) so a disclosure line always carries its own
+    freshness -- "re-read the live curve, don't quote this number from memory" is a
+    standing instruction, not a one-time caveat. Raises FileNotFoundError /
+    ValueError rather than returning a stale or guessed number.
+    """
+    import csv
+    with open(curve_path, newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    match = [r for r in rows if float(r["tenor"]) == float(tenor)]
+    if not match:
+        raise ValueError(f"{curve_path}: no row at tenor {tenor}")
+    if field not in match[0]:
+        raise ValueError(f"{curve_path}: no column '{field}' (have {list(match[0])})")
+    value = float(match[0][field])
+
+    vintage = None
+    try:
+        with open(vintage_path, newline="") as fh:
+            vrows = list(csv.DictReader(fh))
+        if vrows and "date" in vrows[0]:
+            vintage = vrows[0]["date"]
+    except (FileNotFoundError, OSError):
+        pass                                          # vintage stamp is best-effort
+    return value, vintage
