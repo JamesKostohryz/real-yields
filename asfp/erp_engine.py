@@ -87,12 +87,15 @@ def skew_erp_curve(smiles, grid, phi=1.0, floor=0.0, forward=True):
 
 
 def effective_erp(erp_curve, growth=2.0):
-    """Collapse an ERP term structure to a single cash-flow-weighted number (percent).
-    Weights are a real cash-flow stream growing at `growth`%/yr, discounted by the ERP path —
-    dominated by the near-to-middle horizons, like a bond's YTM weights nearer coupons."""
-    grid = erp_curve.index.to_numpy(dtype=float)
-    erp = erp_curve["erp"].to_numpy()
-    cf = (1.0 + growth / 100.0) ** grid
-    df = 1.0 / np.cumprod(1.0 + erp / 100.0)      # discount by the ERP path itself
-    w = cf * df
-    return float(np.sum(w * erp) / np.sum(w))
+    """RETIRED 2026-08-12 (AEG-ERP-Collapse-Function-AUDIT). This averaged RATES and
+    discounted by the ERP path with the risk-free omitted -- not a yield to maturity,
+    not equivalent to repricing anything, and three times more sensitive to the
+    `growth` constant than the correct construction. Use collapse.collapse_rate() (a
+    true bisection YTM against the term structure's own present value) instead -- for
+    a single curve, collapse_rate(grid, curve, growth=growth); for a coe/rf pair,
+    collapse.collapse_coe_and_erp(grid, coe_pct, rf_pct, growth=growth)."""
+    raise NotImplementedError(
+        "erp_engine.effective_erp() is retired -- it averaged rates and discounted by "
+        "the ERP path alone, which is not a yield to maturity. Use "
+        "collapse.collapse_rate() or collapse.collapse_coe_and_erp() instead "
+        "(see AEG-ERP-Collapse-Function-AUDIT-2026-08-12.md).")

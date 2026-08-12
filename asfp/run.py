@@ -240,7 +240,7 @@ def main():
     # Corridor down/up-variance off the SPY smiles, per-year, phi=1 (full option-implied
     # skew). New file; nothing consumes it yet — lets us see the real curve. ---
     try:
-        from . import company as comp, erp_engine as ee
+        from . import company as comp, erp_engine as ee, collapse as col
         import yfinance as _yf
         _tk = _yf.Ticker("SPY"); _fi = _tk.fast_info
         _px = float(_fi.get("last_price") or _fi.get("lastPrice") or 0.0)
@@ -249,7 +249,9 @@ def main():
             GS = np.arange(1, 31, dtype=float)
             curve = ee.skew_erp_curve(smiles, GS, phi=1.0)
             curve.round(4).to_csv(f"{OUTDIR}/market_skew_erp.csv")
-            eff = ee.effective_erp(curve)
+            # retired erp_engine.effective_erp() 2026-08-12 (wrong collapse: averaged
+            # rates, discounted by the ERP path alone). True YTM collapse instead:
+            eff = col.collapse_rate(GS, curve["erp"].to_numpy(), growth=2.0)
             rs = comp.realized_skew("^GSPC")           # physical skew for the phi dial
             phi_est = (rs["corridor"] / (curve["corridor_skew"].mean())
                        if rs and curve["corridor_skew"].mean() > 1e-6 else None)

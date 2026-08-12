@@ -235,7 +235,7 @@ def main():
     # --- non-fatal: SKEW-PRICED ERP term structure for this name (final engine).
     # Corridor off the name's own multi-tenor smiles; single names compress vs the index. ---
     try:
-        from . import company as comp, erp_engine as ee
+        from . import company as comp, erp_engine as ee, collapse as col
         import yfinance as _yf
         _tk = _yf.Ticker(ticker); _fi = _tk.fast_info
         _px = float(_fi.get("last_price") or _fi.get("lastPrice") or 0.0)
@@ -245,7 +245,9 @@ def main():
             curve = ee.skew_erp_curve(smiles, GS, phi=1.0)
             curve.round(4).to_csv(f"{OUTDIR}/skew_erp_{ticker}.csv")
             written.append(f"skew_erp_{ticker}.csv")
-            eff = ee.effective_erp(curve)
+            # retired erp_engine.effective_erp() 2026-08-12 (wrong collapse: averaged
+            # rates, discounted by the ERP path alone). True YTM collapse instead:
+            eff = col.collapse_rate(GS, curve["erp"].to_numpy(), growth=2.0)
             rs = comp.realized_skew(ticker)
             if rs:
                 pd.DataFrame([{"field": k, "value": v} for k, v in rs.items()]

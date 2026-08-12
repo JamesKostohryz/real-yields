@@ -140,7 +140,47 @@ def test_extension_pushes_observed_front_out():
 
 
 # ----------------------------- effective collapse ---------------------------------
-def test_effective_collapse_additive_and_bounded():
+# NOTE 2026-08-12 (AEG-ERP-Collapse-Function-AUDIT): the previous version of this test
+# asserted eff_rf + eff_mkt + eff_idio == eff_coe, but eff_mkt and eff_idio are DEFINED
+# as differences that telescope back to eff_coe -- the assertion is true for any numbers
+# whatsoever, including nonsense from a broken collapse_rate, and validated nothing.
+# Replaced with three real tests of collapse_rate's actual repricing behaviour, run
+# through the same rf/mkt/idio decomposition datasources.py and run_company.py use.
+
+def test_effective_collapse_flat_curve_reprices_to_itself():
+    # A flat curve on each leg must collapse to THAT flat level, not merely satisfy the
+    # additive identity (which holds even when the collapse is wrong).
+    grid = np.arange(1, 151, dtype=float)
+    rf = np.full_like(grid, 2.0)
+    mkt = np.full_like(grid, 3.5)
+    idio = np.full_like(grid, 1.0)
+    coe = rf + mkt + idio
+    eff_coe = col.collapse_rate(grid, coe, growth=2.0)
+    eff_rf = col.collapse_rate(grid, rf, growth=2.0)
+    eff_rfmkt = col.collapse_rate(grid, rf + mkt, growth=2.0)
+    eff_mkt = eff_rfmkt - eff_rf
+    eff_idio = (eff_coe - eff_rf) - eff_mkt
+    assert abs(eff_rf - 2.0) < 1e-4
+    assert abs(eff_mkt - 3.5) < 1e-4
+    assert abs(eff_idio - 1.0) < 1e-4
+    assert abs(eff_coe - 6.5) < 1e-4
+
+
+def test_effective_collapse_single_terminal_cashflow_matches_bootstrap():
+    # A single cash flow at the final tenor T prices only the cumulative discount factor
+    # to T, so the collapsed flat rate must exactly reproduce the curve's own T-year spot
+    # -- the parameter-free "bootstrap" reading (AEG-ERP-Collapse-Function-AUDIT object d)
+    # -- independent of the growth/profile default.
+    grid = np.arange(1, 31, dtype=float)
+    rf = np.interp(grid, [1, 10, 30], [1.6, 2.4, 3.0])
+    T = grid[-1]
+    cf = np.zeros_like(grid); cf[-1] = 1.0
+    eff_rf = col.collapse_rate(grid, rf, cashflows=cf)
+    spot_rf_T = (float(np.prod(1 + rf / 100.0)) ** (1.0 / T) - 1.0) * 100.0
+    assert abs(eff_rf - spot_rf_T) < 1e-6
+
+
+def test_effective_collapse_bounded_by_curve_range():
     grid = np.arange(1, 151, dtype=float)
     rf = np.interp(grid, [1, 10, 30, 150], [1.6, 2.4, 2.9, 2.9])
     mkt = np.interp(grid, [1, 5, 30, 150], [4.0, 4.4, 3.0, 3.0])
@@ -148,12 +188,5 @@ def test_effective_collapse_additive_and_bounded():
     coe = rf + mkt + idio
     eff_coe = col.collapse_rate(grid, coe, growth=2.0)
     eff_rf = col.collapse_rate(grid, rf, growth=2.0)
-    eff_rfmkt = col.collapse_rate(grid, rf + mkt, growth=2.0)
-    eff_mkt = eff_rfmkt - eff_rf
-    eff_company = eff_coe - eff_rf
-    eff_idio = eff_company - eff_mkt
-    # additive by construction
-    assert abs((eff_rf + eff_mkt + eff_idio) - eff_coe) < 1e-9
-    # each effective rate sits inside the curve's own range (PV-weighted average)
     assert coe.min() - 1e-6 <= eff_coe <= coe.max() + 1e-6
-    assert eff_company > eff_mkt                                    # idio is positive
+    assert rf.min() - 1e-6 <= eff_rf <= rf.max() + 1e-6
