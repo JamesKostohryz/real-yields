@@ -63,7 +63,7 @@ if __name__=="__main__":
     state=json.load(open("ERP_HELD_STATE_2026-06.json"))
     r=run("2026-06-01", {5:1.885,10:2.204,20:2.745,30:2.73}, nominal_1y=3.83, sp_close=7450.03, state=state, outdir=".")
     print("RUNNER SMOKE (June): eff tips=%.3f erp=%.3f coe=%.3f dur=%.2f"%(r["eff_tips"],r["eff_erp"],r["eff_coe"],r["D_out"]))
-    assert abs(r["eff_tips"]-2.349)<0.01 and abs(r["eff_erp"]-3.887)<0.01 and abs(r["eff_coe"]-6.236)<0.01, "SMOKE FAILED"
+    assert abs(r["eff_tips"]-2.349)<0.01 and abs(r["eff_erp"]-3.400)<0.01 and abs(r["eff_coe"]-5.748)<0.01, "SMOKE FAILED"  # preset B, landed 2026-08-12
     import pandas as pd
     got=pd.read_csv("TODAY_forward_curve_latest.csv"); ref=pd.read_csv("TODAY_forward_curve_2026-06.csv")
     sp=max(abs(got.spot_coe-ref.spot_coe)); print("  wrote _latest files; spot_coe max|delta| vs committed June = %.4f pp"%sp)

@@ -28,6 +28,15 @@ R_NEUTRAL=2.0; H_CONV=20.0; VARP=3.0; C=7.5; VOLNORM=13.0
 G_REAL=0.0175; D_LO=12.0; D_KNEE=30.0; D_MAX=60.0
 LO,HI=0.5,4.5; BETA_IN=0.30; KMAX=5.0; SCALE=1.3; CASH_HURDLE=1.5
 CORP_PREM_DEFAULT=1.8   # BAA-AAA credit file ends 2021; default floor, non-binding at current ERP
+# Plateau presets (AEG-ERP-TASK6-BUILD-SPEC-2026-08-12.md sec.4; landed 2026-08-12).
+# Pure-risk long-run targets the curve blends toward as T grows. Front end (T<=3, option-
+# implied) is untouched by any preset; the blend ramps in from T=3 to T=30 and is full-
+# weight (100% preset) at T>=30 and beyond, matching how gdecay/gap_decay already go flat
+# past year 30. corp_prem stays a separate, lower hard floor underneath the blended value
+# (Task 6 sec.3 -- the floor and the preset are two different numbers, not one).
+PLATEAU_PRESETS={"A":3.35,"B":2.40,"C":2.05}   # pure-risk plateau, total = +cost (~0.50 today)
+PLATEAU_DEFAULT="B"
+def plateau_w(T): return float(np.interp(T,[1,3,10,20,30],[0.0,0.0,0.35,0.75,1.0]))
 RVb={1:.195,2:.18,3:.172,5:.158,7:.148,10:.138,15:.126,20:.118,25:.112,30:.108}
 def rvbase(T): ks=sorted(RVb); return float(np.interp(T,ks,[RVb[k] for k in ks]))
 def gdecay(T): return float(np.interp(T,[1,10,20,30],[1.12,1.0,0.9,0.85]))
@@ -54,21 +63,25 @@ def fwd_from_spot(spot):   # zero -> 1y-forward bootstrap (engine convention)
         else: f.append((1+spot[i])**(i+1)/(1+spot[i-1])**i-1)
     return np.array(f)
 
-def build_asof(real_tips_5pt, norm_ey, vs, fey_in, D_in, cost, corp_prem=CORP_PREM_DEFAULT):
+def build_asof(real_tips_5pt, norm_ey, vs, fey_in, D_in, cost, corp_prem=CORP_PREM_DEFAULT, preset=PLATEAU_DEFAULT):
     """One daily step from the incoming monthly state. Returns effective + fwd term structure."""
+    if preset not in PLATEAU_PRESETS: raise KeyError(f"unknown preset {preset!r}; use one of {list(PLATEAU_PRESETS)}")
+    preset_val=PLATEAU_PRESETS[preset]
     ks=[1,5,10,20,30]; yv=np.interp(Tclip,ks,[real_tips_5pt[k] for k in ks])
     w=wget(D_in); tips_eff=float(w@yv)
     bv=np.array([base_val_T(norm_ey,yv[i],Tclip[i],vs,fey_in) for i in range(TMAX)])
-    bvc=float(w@bv); Rc=Rresp(tips_eff)
+    bv_blend=np.array([(1-plateau_w(Tg[i]))*bv[i]+plateau_w(Tg[i])*preset_val for i in range(TMAX)])
+    bvc=float(w@bv_blend); Rc=Rresp(tips_eff)
     erp_risk=max(corp_prem,bvc+Rc); eff_erp=erp_risk+cost; eff_coe=tips_eff+eff_erp
     D_out=0.6*D_in+0.4*dur(eff_coe); fey_out=0.7*fey_in+0.3*eff_coe
     # term-structure snapshot uses the UPDATED fair_ey (fey_out), common Rresp at the effective yield
     yvT=yv[:30].copy()
-    erpT=np.array([max(corp_prem, base_val_T(norm_ey,yvT[i],float(Tclip[i]),vs,fey_out)+Rc)+cost for i in range(30)])
+    erpT=np.array([max(corp_prem, (1-plateau_w(i+1))*base_val_T(norm_ey,yvT[i],float(Tclip[i]),vs,fey_out)+plateau_w(i+1)*preset_val+Rc)+cost for i in range(30)])
     coeT=yvT+erpT
     fr=fwd_from_spot(yvT/100.0)*100.0; fc=fwd_from_spot(coeT/100.0)*100.0; fe=fc-fr
     return dict(eff_tips=tips_eff,eff_erp=eff_erp,eff_coe=eff_coe,D_out=D_out,fey_out=fey_out,
-                spot_real=yvT,spot_erp=erpT,spot_coe=coeT,fwd_real=fr,fwd_erp=fe,fwd_coe=fc)
+                spot_real=yvT,spot_erp=erpT,spot_coe=coeT,fwd_real=fr,fwd_erp=fe,fwd_coe=fc,
+                preset=preset,preset_pure_risk=preset_val)
 
 # ---------- vol_scale helper (monthly re-anchor; NOT needed by the hermetic gate) ----------
 def vol_scale_from_shiller(asof_month, path='/tmp/shiller/shiller.csv'):
@@ -91,8 +104,11 @@ VS_JUNE=0.9348                    # vol_scale at 2026-06 (clip(rvol/13)); precom
 JUNE_TIPS={1:1.07,5:1.885,10:2.204,20:2.745,30:2.73}
 JUNE_NORM_EY=3.138
 JUNE_STATE=dict(fey_in=6.02, D_in=24.72, cost=0.503)          # May->June incoming state
-JUNE_EFF=dict(eff_tips=2.349, eff_erp=3.887, eff_coe=6.236)   # committed effective
-SPOT_COE_REF=[5.0710,5.4490,5.7660,6.0550,6.3290,6.4310,6.5180,6.5840,6.6390,6.6840,6.7140,6.7350,6.7490,6.7570,6.7580,6.7530,6.7430,6.7300,6.7130,6.6930,6.6090,6.5280,6.4500,6.3750,6.3040,6.2370,6.1730,6.1110,6.0530,5.9970]
+JUNE_EFF=dict(eff_tips=2.349, eff_erp=3.400, eff_coe=5.748)   # committed effective, PRESET B
+# 2026-08-12: presets landed. Pre-preset June reference was eff_erp=3.887, eff_coe=6.236 --
+# the ~49bp drop is preset B (2.40% pure risk) replacing the un-chosen ~2.77% the long end
+# used to converge to on its own (see AEG-ERP-PRESETS-LANDED-2026-08-12.md for the full diff).
+SPOT_COE_REF=[5.0490,5.4178,5.7276,5.9352,6.1229,6.1375,6.1380,6.1209,6.0964,6.0667,6.0419,6.0145,5.9859,5.9571,5.9291,5.9021,5.8780,5.8575,5.8411,5.8292,5.7816,5.7385,5.6996,5.6647,5.6336,5.6063,5.5823,5.5614,5.5436,5.5284]
 
 def run_gate():
     r=build_asof(JUNE_TIPS, JUNE_NORM_EY, VS_JUNE, **JUNE_STATE)

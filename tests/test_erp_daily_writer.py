@@ -28,8 +28,8 @@ def test_writer_overlay_contract():
     curve = ovl.load_curve(os.path.join(d, "TODAY_forward_curve_latest.csv"))
     eff = ovl.load_effective(os.path.join(d, "ERP_effective_latest.csv"))
     assert len(curve) == 30, f"expected 30 tenors, got {len(curve)}"
-    assert abs(r["eff_tips"] - 2.349) < 0.01 and abs(r["eff_erp"] - 3.887) < 0.01 \
-        and abs(r["eff_coe"] - 6.236) < 0.011, "June effective tie failed"
+    assert abs(r["eff_tips"] - 2.349) < 0.01 and abs(r["eff_erp"] - 3.400) < 0.01 \
+        and abs(r["eff_coe"] - 5.748) < 0.011, "June effective tie failed"  # preset B, landed 2026-08-12
     # load_effective already enforces eff_coe == eff_tips_ry + eff_erp within TOL_IDENT
     print("writer<->overlay contract OK: load_curve 30 tenors, load_effective identity holds, eff ties June")
 
