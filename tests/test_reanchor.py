@@ -19,6 +19,7 @@ import shutil
 import sys
 import tempfile
 
+import pandas as pd
 import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -66,6 +67,8 @@ def repo():
     os.makedirs(os.path.join(d, "history"))
     shutil.copy(os.path.join(ROOT, "outputs", "market_credit_latest.csv"),
                 os.path.join(d, "outputs", "market_credit_latest.csv"))
+    shutil.copy(os.path.join(ROOT, "outputs", "curve_latest.csv"),
+                os.path.join(d, "outputs", "curve_latest.csv"))
     shutil.copy(os.path.join(ROOT, "history", "real_yield_curve_v3_MASTER.csv"),
                 os.path.join(d, "history", "real_yield_curve_v3_MASTER.csv"))
     return d
@@ -83,11 +86,16 @@ def test_cost_keeps_gliding_then_flatlines_at_the_floor():
     assert RA.cost_for(dt.date(2050, 1, 1)) == pytest.approx(RA.COST_FLOOR)
 
 
-def test_the_anchor_is_a_date_so_both_halves_are_the_same_series():
-    """Adopting the FRED derivation must move no number on the anchor date; from there it
-    tracks. If this drifts, the wedge has been retyped instead of derived."""
-    assert RA.BE1Y_ANCHOR == 2.76 and RA.BE1Y_ANCHOR_DATE == "2026-06-30"
-    assert not hasattr(RA, "EXPINF1Y_ANCHOR"), "a hardcoded expected-inflation level reintroduces the two-series defect"
+def test_breakeven1y_is_the_market_series_not_expected_inflation():
+    """James's ruling 2026-08-19. The two are different quantities, not two estimates of one:
+    the market breakeven carries the inflation risk premium and the TIPS liquidity premium, and
+    a real discount rate needs the yield an investor can actually transact at. Guarding by
+    ABSENCE, because the failure mode is a plausible-looking expected-inflation source creeping
+    back in."""
+    assert RA.BE1Y_CURVE_FILE.endswith("curve_latest.csv")
+    for gone in ("BE1Y_WEDGE", "EXPINF1Y_ANCHOR", "BE1Y_SERIES", "BE1Y_ANCHOR"):
+        assert not hasattr(RA, gone), (
+            f"{gone} is back: breakeven1y has drifted to an expected-inflation construction")
 
 
 def test_the_unfloored_glide_really_does_go_negative():
@@ -135,25 +143,33 @@ def test_carried_inputs_are_carried_exactly(repo):
         assert st[k] == prior[k], f"{k} must be carried unchanged until it has a live source"
 
 
-def test_breakeven1y_is_never_read_off_the_pipeline_curve(repo):
-    """Regression guard for the mistake this module nearly shipped. outputs/curve_latest.csv's
-    1-year row (2.0783, flagged reliability 0.0 / front-constructed) is 68bp away from the plug
-    the state actually needs (2.76 = nominal_1y - master real1_tips). Substituting it moves the
-    published cost of equity 4.6bp with every other check still green."""
+def test_breakeven1y_comes_off_the_market_curve(repo):
+    """RETIRED AND INVERTED 2026-08-19. This test used to assert the OPPOSITE -- that the curve
+    file is never read -- which was the right guard while the target was the June plug and the
+    wrong guard once the ruling settled the basis. Recorded rather than quietly rewritten: the
+    68bp gap it was built to defend is the inflation risk premium plus the TIPS liquidity
+    premium at one year, and that BELONGS in a market discount rate."""
     RA.reanchor(root=repo, asof="2026-08-19")
     st = json.load(open(os.path.join(repo, "ERP_HELD_STATE_2026-08.json")))
-    assert st["breakeven1y"] == pytest.approx(2.76)
-    assert st["breakeven1y"] != pytest.approx(2.0783, abs=1e-3)
+    curve = pd.read_csv(os.path.join(repo, "outputs", "curve_latest.csv"))
+    want = float(curve.loc[curve["maturity"] == 1.0, "breakeven"].iloc[0])
+    assert st["breakeven1y"] == pytest.approx(want, abs=1e-6)
 
 
-def test_a_failed_fred_read_falls_back_to_the_carry_loudly(repo, monkeypatch):
-    """No FRED key in the test environment, so the derivation fails and must fall back to the
-    carry -- written, published, and AMBER. Refusing over one series would keep vs(T) out of
+def test_a_missing_curve_file_falls_back_to_the_carry_loudly(repo):
+    """Written, published, and AMBER. Refusing over one input would keep vs(T) out of
     production; going quiet would be the defect this module exists to prevent."""
-    monkeypatch.delenv("FRED_API_KEY", raising=False)
+    os.remove(os.path.join(repo, "outputs", "curve_latest.csv"))
     res = RA.reanchor(root=repo, asof="2026-08-19")
     assert res["status"] == "written"
     assert any("breakeven1y CARRIED" in m for m in res["amber"])
+
+
+def test_a_front_constructed_point_is_flagged_every_month(repo):
+    """No TIPS matures inside a year, so the 1-year real yield is extrapolated. That is a
+    standing property of this tenor, so it is reported every month rather than accepted once."""
+    res = RA.reanchor(root=repo, asof="2026-08-19")
+    assert any("front-CONSTRUCTED" in m for m in res["amber"])
 
 
 # ------------------------------------------------------------------ RED
