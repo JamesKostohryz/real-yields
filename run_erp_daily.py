@@ -38,10 +38,17 @@ def run(asof_date, reals_5_10_20_30, nominal_1y, sp_close, state, outdir="."):
 # job above -- `vs` stays a slow, monthly-held input by design (build_erp_daily.py's own
 # docstring, locked 2026-07-22). This is the tool a human runs at each monthly re-anchor to
 # produce the NEXT vs value, replacing the old vol_scale_from_shiller() call.
+#
+# WIRED IN 2026-08-18 (session 17), approved by James. Before that date this function existed but
+# nothing called it: the monthly re-anchor still went through vol_scale_from_shiller() and every
+# piece of vol_scale_v3 was inert code. It now returns a 30-element vs(T) TERM STRUCTURE, which is
+# what goes into ERP_HELD_STATE_*.json under the "vs" key. build_asof still accepts a scalar and
+# behaves exactly as before if it gets one, so older state files keep working unchanged.
 def refresh_vol_scale(asof_date, last_known_good=None, last_known_good_date=None,
                        vix_val=None, vix3m_val=None, vix6m_val=None, log=print):
     """Run the six-tier VIX1Y source chain, then the soft-clip/fixed-median construction.
-    Returns a dict with the new `vs` value (or None if tier 6 refuses to publish) plus full
+    Returns a dict whose "vs" is the 30-element vs(T) term structure (or None if tier 6 refuses
+    to publish), "vs_1y" the year-1 scalar for eyeballing against the old series, plus full
     diagnostics (which tier answered, any alarm, cross-check detail) so the human re-anchoring
     the state file can see exactly what happened before adopting the number. Does NOT write to
     ERP_HELD_STATE_*.json itself -- that adoption step stays a deliberate, reviewed action."""
@@ -52,10 +59,22 @@ def refresh_vol_scale(asof_date, last_known_good=None, last_known_good_date=None
                                     log=log)
     if fetch["value"] is None:
         return dict(vs=None, vix1y=None, **fetch)
-    vs = v3.vol_scale_from_vix1y(fetch["value"])
+    vs_curve = v3.vol_scale_curve_from_vix1y(fetch["value"])
+    vs1y = v3.vol_scale_from_vix1y(fetch["value"])
+    # Guarantee, not a hope: the year-1 element of the term structure IS the scalar. If these
+    # ever disagree the construction has drifted and the re-anchor must stop.
+    if abs(float(vs_curve[0]) - vs1y) > 1e-12:
+        raise AssertionError(f"vs(1y)={vs_curve[0]!r} != scalar {vs1y!r}; vs(T) construction drifted")
+    floor = v3.feasibility_floor()
+    eff = v3.VIX1Y_MEDIAN * vs1y
+    if eff < floor - 1e-9:
+        raise AssertionError(f"effective VIX1Y {eff:.4f} is below the feasibility floor {floor:.4f}")
     log(f"  vol_scale_v3: VIX1Y={fetch['value']:.3f} / median={v3.VIX1Y_MEDIAN} "
-        f"-> vs={vs:.4f}  (tier {fetch['tier_used']}, alarm={fetch['alarm']})")
-    return dict(vs=vs, vix1y=fetch["value"], **fetch)
+        f"-> vs(1y)={vs1y:.4f}  (tier {fetch['tier_used']}, alarm={fetch['alarm']})")
+    log(f"    vs(T): 1y {vs_curve[0]:.4f}  2y {vs_curve[1]:.4f}  5y {vs_curve[4]:.4f}  "
+        f"10y {vs_curve[9]:.4f}  30y {vs_curve[29]:.4f}  (frozen past year {v3.VS_FREEZE_T:.0f})")
+    log(f"    feasibility floor {floor:.4f}, effective VIX1Y {eff:.4f} -- clears")
+    return dict(vs=[float(x) for x in vs_curve], vs_1y=vs1y, vix1y=fetch["value"], **fetch)
 
 
 SP500_SERIES = "SP500"   # FRED S&P 500 index level (daily close). ERP: confirm on the live eyeball.
