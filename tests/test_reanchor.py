@@ -83,10 +83,11 @@ def test_cost_keeps_gliding_then_flatlines_at_the_floor():
     assert RA.cost_for(dt.date(2050, 1, 1)) == pytest.approx(RA.COST_FLOOR)
 
 
-def test_the_wedge_reproduces_the_june_breakeven_anchor_exactly():
+def test_the_anchor_is_a_date_so_both_halves_are_the_same_series():
     """Adopting the FRED derivation must move no number on the anchor date; from there it
     tracks. If this drifts, the wedge has been retyped instead of derived."""
-    assert RA.EXPINF1Y_ANCHOR + RA.BE1Y_WEDGE == pytest.approx(2.76, abs=1e-9)
+    assert RA.BE1Y_ANCHOR == 2.76 and RA.BE1Y_ANCHOR_DATE == "2026-06-30"
+    assert not hasattr(RA, "EXPINF1Y_ANCHOR"), "a hardcoded expected-inflation level reintroduces the two-series defect"
 
 
 def test_the_unfloored_glide_really_does_go_negative():

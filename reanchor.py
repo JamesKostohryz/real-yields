@@ -179,78 +179,86 @@ def derive_corp_prem(root: str, asof: dt.date, log=print) -> float:
 
 
 # ---------------------------------------------------------------------------- breakeven1y
-# THE 1-YEAR ANCHOR PAIR. Both halves are observations, not choices, and both are recorded here
-# so the wedge below is auditable rather than typed.
+# THE ANCHOR IS A DATE, NOT A NUMBER. THIS IS THE SECOND CORRECTION TO THIS FUNCTION TODAY AND
+# THE REASON IS WORTH THE SPACE.
 #
-#   BE1Y_ANCHOR      2.76       ERP_HELD_STATE_2026-06.json. Verified to be the plug that makes
-#                               nominal_1y - breakeven1y reproduce the monthly master's 1-year
-#                               real yield: 3.83 - 1.069601 = 2.760399.
-#   EXPINF1Y_ANCHOR  3.439483   Cleveland Fed 1-year expected inflation for the SAME vintage,
-#                               history/expected_inflation_termstructure_v2.csv, 2026-06-30.
+# The first FRED version hardcoded the June expected-inflation half of the wedge as 3.439483,
+# taken from history/expected_inflation_termstructure_v2.csv. That file is NOT Cleveland Fed
+# data: it starts in 1876, and Cleveland's EXPINF series starts in 1982. It is this repository's
+# own historical expected-inflation construction. So the wedge subtracted one series from a
+# level anchored to another, and the resulting breakeven1y came out at 1.7142 against June's
+# 2.76 — a 105bp "move" that was mostly a definitional gap between two different series, not a
+# change in inflation expectations.
 #
-# WEDGE = BE1Y_ANCHOR - EXPINF1Y_ANCHOR = -0.679483. Economically this is the 1-year inflation
-# risk premium plus the TIPS liquidity effect: the gap between the breakeven the curve model
-# wants at one year and pure expected inflation. It is a slow structural quantity. Expected
-# inflation is not.
-BE1Y_ANCHOR = 2.76
-EXPINF1Y_ANCHOR = 3.439483376669958
-BE1Y_WEDGE = BE1Y_ANCHOR - EXPINF1Y_ANCHOR
+# It was caught by the AMBER guard, which is the guard working. It would not have been caught by
+# any test of the arithmetic, because the arithmetic was right.
+#
+# THE FIX IS STRUCTURAL: fetch BOTH halves of the wedge from THE SAME SERIES. The anchor is now
+# a DATE — the vintage whose breakeven1y is known good — and EXPINF1YR is read at that date and
+# today, from FRED, in the same call pattern. A wedge between two reads of one series cannot
+# have this defect. Nothing here can drift into comparing two constructions again.
+BE1Y_ANCHOR = 2.76               # ERP_HELD_STATE_2026-06.json, verified = 3.83 - 1.069601
+BE1Y_ANCHOR_DATE = "2026-06-30"  # the vintage that value belongs to
+BE1Y_SERIES = "EXPINF1YR"        # Cleveland Fed 1-year expected inflation, monthly, on FRED
 
 
 def derive_breakeven1y(root: str, prior: dict, asof: dt.date, log=print) -> tuple[float, list]:
-    """DERIVED FROM FRED. breakeven1y = EXPINF1YR + BE1Y_WEDGE. Returns (value, amber).
+    """DERIVED FROM FRED, SELF-ANCHORED. Returns (value, amber).
 
-    WHY NOT THE OBVIOUS SOURCE. `breakeven1y` looks like an inflation breakeven and is not one.
-    It is a plug: the state's rule is `real_1y = nominal_1y - breakeven1y`, and the value exists
-    to make that identity reproduce the monthly master's 1-year real yield. An earlier draft of
-    this function read outputs/curve_latest.csv's 1-year row -- 2.0783, 68 basis points away, on
-    a row that file itself flags `reliability 0.0, provenance front-constructed`. That would have
-    moved real_1y from 1.10 to 1.78 and the published cost of equity by 4.6bp with every test
-    green. `test_breakeven1y_is_never_read_off_the_pipeline_curve` stops it recurring.
+        breakeven1y(t) = EXPINF1YR(t) + [ BE1Y_ANCHOR - EXPINF1YR(BE1Y_ANCHOR_DATE) ]
 
-    WHY NOT CARRY IT. The first working version carried it forward with an alarm, because its
-    apparent source -- history/real_yield_curve_v3_MASTER.csv -- is written by NOTHING in this
-    repository and ends 2026-06-01. James, 2026-08-19: "All of this data is carried by FRED. It
-    should all be updating every single day." He is right, and the fetcher already existed:
-    `asfp.datasources.fetch_expinf()` pulls Cleveland Fed EXPINF1YR..EXPINF30YR from FRED. It
-    was simply never pointed at this input.
+    WHY THIS INPUT NEEDS EXPLAINING. `breakeven1y` looks like an inflation breakeven and is not
+    one. It is a plug: the state's rule is `real_1y = nominal_1y - breakeven1y`, and the value
+    exists to make that identity reproduce the monthly master's 1-year real yield. Two wrong
+    sources were tried before this one, and both are recorded because each is instructive:
 
-    WHAT IS HELD AND WHAT MOVES. The decomposition is
-        breakeven1y  =  expected inflation (MOVES, from FRED)  +  wedge (HELD)
-    rather than holding the whole number. That is a real improvement and not a complete one:
-    the wedge is still anchored to a single date, June 2026. It is a slow structural quantity --
-    an inflation risk premium plus a TIPS liquidity effect -- so holding it is defensible in a
-    way that holding a level that tracks realized inflation was not. It is NOT a measurement,
-    and it belongs on the open register until the 1-year point has a fitted construction of its
-    own. Recorded here rather than buried, because a held wedge that nobody remembers is holding
-    is exactly how this project's nine silent-input failures happened.
+      1. outputs/curve_latest.csv's 1-year row (2.0783). 68bp away, on a row that file itself
+         flags `reliability 0.0, provenance front-constructed`. Guarded by
+         test_breakeven1y_is_never_read_off_the_pipeline_curve.
+      2. A wedge anchored on history/expected_inflation_termstructure_v2.csv (3.439483). A
+         DIFFERENT SERIES from the one being fetched — that file is this repo's own 1876-onward
+         construction, not Cleveland's. Guarded by making the anchor a date, so both halves are
+         necessarily the same series.
 
-    BY CONSTRUCTION THIS REPRODUCES THE JUNE ANCHOR EXACTLY. Feeding June's own EXPINF1YR back
-    in returns 2.76 to the last decimal, so adopting it moved no published number on the day it
-    landed; from here it tracks."""
+    WHY NOT CARRY IT. James, 2026-08-19: "All of this data is carried by FRED. It should all be
+    updating every single day." Correct, and the fetcher already existed and had simply never
+    been pointed at this input.
+
+    WHAT IS HELD AND WHAT MOVES. Expected inflation moves, from FRED. The wedge — a 1-year
+    inflation risk premium plus TIPS liquidity effect — is held at its June 2026 value. Holding
+    a slow structural spread is defensible in a way that holding a level which tracks realized
+    inflation was not, but the wedge is NOT a measurement and belongs on the open register until
+    the 1-year point has a fitted construction of its own. Named in the state file's derivation
+    block so it cannot become a quantity nobody remembers is being held.
+
+    BY CONSTRUCTION THIS RETURNS EXACTLY BE1Y_ANCHOR ON THE ANCHOR DATE."""
     amber = []
     try:
         from asfp import datasources as DS
         key = os.environ.get("FRED_API_KEY")
         if not key:
             raise RuntimeError("FRED_API_KEY not set")
-        expinf, expinf_asof = DS.fetch_expinf(key)
-        e1 = float(expinf[0])
-        if math.isnan(e1):
-            raise RuntimeError("EXPINF1YR came back NaN")
-        val = e1 + BE1Y_WEDGE
-        log(f"  breakeven1y: {val:.4f} = EXPINF1YR {e1:.4f} + wedge {BE1Y_WEDGE:+.4f} "
-            f"(Cleveland Fed via FRED, as of {expinf_asof})")
-        # Cleveland publishes monthly. Older than a quarter means the series itself has stalled.
-        if expinf_asof:
-            ay, am = (int(x) for x in str(expinf_asof)[:7].split("-"))
+        e_now, d_now = DS.fetch_fred_asof(key, BE1Y_SERIES, asof.isoformat())
+        e_anc, d_anc = DS.fetch_fred_asof(key, BE1Y_SERIES, BE1Y_ANCHOR_DATE)
+        if e_now is None or e_anc is None:
+            raise RuntimeError(f"{BE1Y_SERIES} returned no observation "
+                               f"(now={e_now!r} @ {d_now!r}, anchor={e_anc!r} @ {d_anc!r})")
+        wedge = BE1Y_ANCHOR - float(e_anc)
+        val = float(e_now) + wedge
+        log(f"  breakeven1y: {val:.4f} = {BE1Y_SERIES} {float(e_now):.4f} (@{d_now}) "
+            f"+ wedge {wedge:+.4f}  [anchor {BE1Y_ANCHOR} - {float(e_anc):.4f} (@{d_anc})]")
+        if math.isnan(val):
+            raise RuntimeError("breakeven1y computed as NaN")
+        # Cleveland publishes monthly; more than a quarter behind means the series has stalled.
+        if d_now:
+            ay, am = (int(x) for x in str(d_now)[:7].split("-"))
             age = (asof.year - ay) * 12 + (asof.month - am)
             if age > 2:
-                amber.append(f"EXPINF1YR is {age} months stale (as of {expinf_asof}); "
-                             f"breakeven1y derived from it may be lagging.")
+                amber.append(f"{BE1Y_SERIES} is {age} months stale (latest {d_now}); "
+                             f"breakeven1y derived from it is lagging.")
         return val, amber
     except Exception as e:
-        # FALL BACK TO THE CARRY, LOUDLY. A missing FRED read must not stop the re-anchor -- the
+        # FALL BACK TO THE CARRY, LOUDLY. A missing FRED read must not stop the re-anchor: the
         # other seven inputs are fine and refusing would keep vs(T) out of production over one
         # series. But it must never be quiet.
         prev = prior.get("breakeven1y")
@@ -500,10 +508,11 @@ def reanchor(root: str = ".", asof: str | None = None, dry_run: bool = False,
                    "median": getattr(__import__("vol_scale_v3"), "VIX1Y_MEDIAN", None),
                    "vs_1y": round(vs_1y, 6)},
             "corp_prem": "asfp.volsurface.floor_from_credit_grid(outputs/market_credit_latest.csv, wedge=0.50)",
-            "breakeven1y": (f"EXPINF1YR (Cleveland Fed via FRED) + held wedge {BE1Y_WEDGE:+.6f}, "
-                            f"the wedge anchored on {BE1Y_ANCHOR} / {EXPINF1Y_ANCHOR:.6f} at the "
-                            f"2026-06 vintage. Expected inflation moves; the inflation-risk-plus-"
-                            f"liquidity wedge is held and is NOT a measurement -- open register."),
+            "breakeven1y": (f"{BE1Y_SERIES} (FRED) + wedge, where wedge = {BE1Y_ANCHOR} minus "
+                            f"{BE1Y_SERIES} read at {BE1Y_ANCHOR_DATE}. BOTH halves come from the "
+                            f"same series by construction. Expected inflation moves; the "
+                            f"inflation-risk-plus-liquidity wedge is HELD and is NOT a "
+                            f"measurement -- open register."),
             "cost": (f"build_erp_daily.cost_of_year(), glide continues at its own rate, floored "
                      f"at {COST_FLOOR} (reached mid-2032). James's ruling 2026-08-19."),
             "fey_in_D_in": "prior state replayed through build_asof at the prior month's last business day",
