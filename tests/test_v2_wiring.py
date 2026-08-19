@@ -135,7 +135,9 @@ def test_extension_pushes_observed_front_out():
     assert ts_no[-1][0] == 1.0 and ts_yes[-1][0] == 3.0
     # inside the extended window the ERP is the OBSERVED option value (Martin of the
     # 3y vol), replacing the split-the-distance extrapolation used without it
-    assert np.isclose(d_yes["market_erp"].loc[3.0], 19.0 ** 2 / 100)
+    # FORWARD convention -- see the note in tests/test_volsurface.py. The spot Martin value of
+    # the 3y vol is recovered as the MEAN of the forwards out to 3y, not read off the 3y cell.
+    assert np.isclose(d_yes["market_erp"].loc[1.0:3.0].mean(), 19.0 ** 2 / 100)
     assert not np.isclose(d_yes["market_erp"].loc[3.0], d_no["market_erp"].loc[3.0])
 
 

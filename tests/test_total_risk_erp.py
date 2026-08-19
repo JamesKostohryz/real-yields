@@ -19,7 +19,11 @@ def test_market_erp_uses_the_vol_curve_then_glides_to_floor():
     floor = 2.0
     m = tr.build_market_erp_curve(GRID, IDX_VOL, floor)["market_erp"]
     assert np.isclose(m.loc[1.0], 20.0 ** 2 / 100.0)        # 1y = Martin of the 1y vol
-    assert np.isclose(m.loc[5.0], 21.5 ** 2 / 100.0)        # 5y = Martin of the 5y vol (observed)
+    # FORWARD convention, settled 2026-08-19 -- see the note in tests/test_volsurface.py.
+    # Note that the 1y assertion above passes unchanged: forward and spot coincide at the first
+    # tenor and diverge after it, which is exactly why this defect sat here looking like a small
+    # numerical disagreement rather than a units error.
+    assert np.isclose(m.loc[1.0:5.0].mean(), 21.5 ** 2 / 100.0)   # spot at 5y = mean of forwards
     assert m.loc[10.0] > floor and m.loc[100.0] < m.loc[10.0]  # glides down after
     assert abs(m.loc[100.0] - floor) < 0.05                 # reaches floor deep out
 
@@ -66,7 +70,7 @@ def test_elevator_lifts_R_toward_distress_past_ory():
 def test_blended_market_erp_converges_slower_than_fast_glide():
     b = tr.build_market_erp_blended(GRID, IDX_VOL, 2.0, converge_year=30.0)["market_erp"]
     f = tr.build_market_erp_curve(GRID, IDX_VOL, 2.0)["market_erp"]
-    assert np.isclose(b.loc[5.0], 21.5 ** 2 / 100)            # observed at 5y
+    assert np.isclose(b.loc[1.0:5.0].mean(), 21.5 ** 2 / 100)   # spot at 5y = mean of forwards
     assert b.loc[15.0] > f.loc[15.0] and b.loc[20.0] > f.loc[20.0]  # stays elevated
     assert abs(b.loc[30.0] - 2.0) < 1e-9                      # fully bond by 30y
     assert np.all(np.diff(b.loc[5.0:30.0].to_numpy()) <= 1e-9)   # monotone down

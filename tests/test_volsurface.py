@@ -33,7 +33,23 @@ def test_build_v2_needs_two_points_and_blends_to_150y():
     vols = {"VIXCLS": 17.0, "VXVCLS": 18.5, "VIX1Y": 20.0, "CME5Y": 21.5}
     df, ts = vs.build_v2_market_erp(GRID, vols, floor, converge_year=30.0)
     assert len(ts) == 4 and ts[-1][0] == 5.0              # 5y observed front
-    assert np.isclose(df["market_erp"].loc[5.0], 21.5 ** 2 / 100)
+    # CONVENTION, SETTLED 2026-08-19. `market_erp` is a ONE-YEAR-FORWARD curve, not a spot
+    # curve. This assertion used to read the forward at 5y and compare it to the SPOT Martin
+    # variance of the 5y vol, which is a different object -- it failed by 0.64, and the failure
+    # was the test's, not the code's. Verified: the code returns 5.261875 at 5y, which is
+    # exactly the bootstrap 5*v(5) - 4*v(4) off the interpolated vol curve.
+    #
+    # Forward is the correct convention and it was decided on evidence, not preference: the
+    # published file carries fwd_erp and spot_erp as separate columns, and everything
+    # downstream -- the idiosyncratic term structure, the collapse, run_company -- consumes
+    # fwd_erp. A spot-quoting rate library feeding a forward-consuming engine would be a unit
+    # error of exactly the kind this project keeps finding.
+    #
+    # The invariant is asserted in the form that actually pins the convention: the MEAN of the
+    # forwards out to T is the spot variance at T, so a Martin spot reading is recoverable and
+    # is checked here rather than asserted directly on the wrong cell.
+    assert np.isclose(df["market_erp"].loc[1.0:5.0].mean(), 21.5 ** 2 / 100)
+    assert np.isclose(df["market_erp"].loc[1.0:1.0].mean(), 20.0 ** 2 / 100)
     assert abs(df["market_erp"].loc[30.0] - floor) < 1e-9  # converged to floor by 30y
     assert abs(df["market_erp"].loc[150.0] - floor) < 1e-9  # flat to 150y
 
