@@ -58,6 +58,8 @@ jobs:
         run: python build_erp_daily.py
       - name: Writer <-> overlay contract (runner writes _latest; apply_erp_overlay readers validate identities)
         run: python tests/test_erp_daily_writer.py
+      - name: Held-state pointer (newest vintage resolves, is fresh, and name matches contents)
+        run: python -m pytest tests/test_held_state.py -q
       - name: Live preview (READ-ONLY; no commit)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.live_preview == 'true' }}
         env:
@@ -66,7 +68,13 @@ jobs:
           python - <<'PY'
           import json, tempfile, datetime, importlib.util
           import run_erp_daily as rr
-          state = json.load(open("ERP_HELD_STATE_2026-06.json"))
+          # WHICH VINTAGE: resolved, never typed. Before 2026-08-18 this line named June
+          # literally, so writing a new ERP_HELD_STATE_YYYY-MM.json would have changed
+          # nothing and the publish would have gone on using a stale volatility input with
+          # every gate green. resolve_held_state() takes the newest vintage, refuses one
+          # older than four months, and refuses any file whose name and anchor_vintage
+          # disagree. See held_state.py.
+          _, state = rr.resolve_held_state(".")
           asof = datetime.date.today().isoformat()
           reals, nom, sp = rr.fetch_daily_inputs(asof)
           d = tempfile.mkdtemp()
@@ -105,7 +113,13 @@ jobs:
           python - <<'PY'
           import json, datetime, importlib.util
           import run_erp_daily as rr
-          state = json.load(open("ERP_HELD_STATE_2026-06.json"))
+          # WHICH VINTAGE: resolved, never typed. Before 2026-08-18 this line named June
+          # literally, so writing a new ERP_HELD_STATE_YYYY-MM.json would have changed
+          # nothing and the publish would have gone on using a stale volatility input with
+          # every gate green. resolve_held_state() takes the newest vintage, refuses one
+          # older than four months, and refuses any file whose name and anchor_vintage
+          # disagree. See held_state.py.
+          _, state = rr.resolve_held_state(".")
           asof = datetime.date.today().isoformat()
           reals, nom, sp = rr.fetch_daily_inputs(asof)
           r = rr.run(asof, reals, nominal_1y=nom, sp_close=sp, state=state, outdir="history")

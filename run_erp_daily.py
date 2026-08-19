@@ -9,6 +9,7 @@ and writes the two files, so the writer path is verifiable without a live feed.
 """
 import json, csv, numpy as np
 from build_erp_daily import build_asof
+from held_state import resolve_held_state, JUNE_REPRO_STATE  # noqa: F401
 
 def construct_legs(state, reals_5_10_20_30, nominal_1y, sp_close):
     """ERP-owned input construction. reals_* is {5,10,20,30:pct}. Returns (real_5pt dict, norm_ey)."""
@@ -104,13 +105,48 @@ def fetch_daily_inputs(asof_date, api_key=None):
 
 if __name__=="__main__":
     # SMOKE: reproduce June-2026 from committed anchors + June daily inputs, and write the two files.
-    state=json.load(open("ERP_HELD_STATE_2026-06.json"))
-    r=run("2026-06-01", {5:1.885,10:2.204,20:2.745,30:2.73}, nominal_1y=3.83, sp_close=7450.03, state=state, outdir=".")
+    #
+    # PINNED TO JUNE ON PURPOSE. This is a regression fixture, not a live read: it asserts that the
+    # engine still reproduces the June vintage from June's own inputs. It must NOT follow
+    # held_state.resolve_held_state() -- that would make the fixture move every time a new vintage
+    # lands, which is how a regression test quietly stops being one. The LIVE reads (the two jobs in
+    # .github/workflows/erp_daily.yml) do follow the resolver; this does not.
+    #
+    # THREE DEFECTS FIXED HERE 2026-08-18. All three were in this block; none was in the engine.
+    #  (a) It read "TODAY_forward_curve_2026-06.csv" from the CWD, but that file lives in history/.
+    #      Run from the repository root the smoke died on FileNotFoundError BEFORE reaching its own
+    #      spot_coe assertion. The register recorded this as "fails its spot_coe check by 0.87pp";
+    #      it was not failing that check, it was never reaching it.
+    #  (b) Pointed at history/TODAY_forward_curve_2026-06.csv it DOES then disagree, by 0.8725pp.
+    #      That file is the pre-plateau-preset June vintage: the deltas grow with tenor (-0.022pp at
+    #      1y, -0.206pp at 5y, -0.864pp at 20y), which is the preset signature and not drift. The
+    #      historical file is KEPT UNTOUCHED as the record of what June actually published. The
+    #      smoke now checks against history/TODAY_forward_curve_2026-06_presetB.csv -- the same June
+    #      inputs through the current engine. Note the EFFECTIVE triple 2.349 / 3.400 / 5.748 ties
+    #      exactly against either file, which is precisely why a 0.87pp curve disagreement sat here
+    #      unnoticed: the collapsed number was right while the curve behind it was a vintage stale.
+    #  (c) It wrote TODAY_forward_curve_latest.csv and ERP_effective_latest.csv into the repository
+    #      root as untracked strays on every run. It now writes to a temporary directory.
+    import os, tempfile
+    ROOT = os.path.dirname(os.path.abspath(__file__))
+    state=json.load(open(os.path.join(ROOT, JUNE_REPRO_STATE)))
+    outdir=tempfile.mkdtemp()
+    r=run("2026-06-01", {5:1.885,10:2.204,20:2.745,30:2.73}, nominal_1y=3.83, sp_close=7450.03, state=state, outdir=outdir)
     print("RUNNER SMOKE (June): eff tips=%.3f erp=%.3f coe=%.3f dur=%.2f"%(r["eff_tips"],r["eff_erp"],r["eff_coe"],r["D_out"]))
     assert abs(r["eff_tips"]-2.349)<0.01 and abs(r["eff_erp"]-3.400)<0.01 and abs(r["eff_coe"]-5.748)<0.01, "SMOKE FAILED"  # preset B, landed 2026-08-12
     import pandas as pd
-    got=pd.read_csv("TODAY_forward_curve_latest.csv"); ref=pd.read_csv("TODAY_forward_curve_2026-06.csv")
-    sp=max(abs(got.spot_coe-ref.spot_coe)); print("  wrote _latest files; spot_coe max|delta| vs committed June = %.4f pp"%sp)
-    print("  ERP_effective_latest.csv ->", open("ERP_effective_latest.csv").read().strip().replace(chr(10)," | "))
+    got=pd.read_csv(os.path.join(outdir,"TODAY_forward_curve_latest.csv"))
+    ref=pd.read_csv(os.path.join(ROOT,"history","TODAY_forward_curve_2026-06_presetB.csv"))
+    sp=max(abs(got.spot_coe-ref.spot_coe)); print("  wrote _latest files to a temp dir; spot_coe max|delta| vs committed June (preset B) = %.4f pp"%sp)
+    print("  ERP_effective_latest.csv ->", open(os.path.join(outdir,"ERP_effective_latest.csv")).read().strip().replace(chr(10)," | "))
     assert sp<0.01, "WRITE MISMATCH"
+    # the pre-preset historical vintage is retained and is EXPECTED to disagree; assert that it
+    # still does, so that silently regenerating it later shows up as a failure rather than as a pass.
+    old=pd.read_csv(os.path.join(ROOT,"history","TODAY_forward_curve_2026-06.csv"))
+    gap=max(abs(got.spot_coe-old.spot_coe))
+    print("  historical pre-preset June vintage still differs by %.4f pp (expected, retained as the record)"%gap)
+    assert gap>0.5, "the pre-preset June vintage no longer differs -- has it been overwritten?"
+    # exercise the live-path resolver too, so this smoke covers what the workflows actually do
+    p,_s = resolve_held_state(ROOT)
+    print("  resolver -> %s"%os.path.basename(p))
     print("  RUNNER SMOKE PASSED")
