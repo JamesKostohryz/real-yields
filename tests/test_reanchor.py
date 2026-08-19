@@ -73,10 +73,20 @@ def repo():
 
 # ------------------------------------------------------------------ the cost terminal rule
 
-def test_cost_is_floored_at_the_value_the_glide_was_built_to_reach():
-    assert RA.cost_for(dt.date(2026, 8, 19)) == pytest.approx(0.50)
-    assert RA.cost_for(dt.date(2035, 1, 1)) == pytest.approx(0.50)
-    assert RA.cost_for(dt.date(2050, 1, 1)) == pytest.approx(0.50)
+def test_cost_keeps_gliding_then_flatlines_at_the_floor():
+    """James, 2026-08-19: the glide keeps running at its own rate until it reaches 0.25 and
+    flatlines there. So nothing happens at 2026.5; the floor engages in mid-2032."""
+    assert RA.cost_for(dt.date(2026, 8, 19)) == pytest.approx(0.4946, abs=1e-3)
+    assert RA.cost_for(dt.date(2030, 1, 1)) == pytest.approx(0.3532, abs=1e-3)
+    assert RA.cost_for(dt.date(2032, 1, 1)) > RA.COST_FLOOR
+    assert RA.cost_for(dt.date(2033, 1, 1)) == pytest.approx(RA.COST_FLOOR)
+    assert RA.cost_for(dt.date(2050, 1, 1)) == pytest.approx(RA.COST_FLOOR)
+
+
+def test_the_wedge_reproduces_the_june_breakeven_anchor_exactly():
+    """Adopting the FRED derivation must move no number on the anchor date; from there it
+    tracks. If this drifts, the wedge has been retyped instead of derived."""
+    assert RA.EXPINF1Y_ANCHOR + RA.BE1Y_WEDGE == pytest.approx(2.76, abs=1e-9)
 
 
 def test_the_unfloored_glide_really_does_go_negative():
@@ -107,7 +117,7 @@ def test_green_run_writes_a_vs_vector_and_the_resolver_picks_it_up(repo):
     assert st["anchor_vintage"] == "2026-08"
     # THE POINT OF THE WHOLE EXERCISE: a 30-long vs(T), not June's scalar.
     assert isinstance(st["vs"], list) and len(st["vs"]) == 30
-    assert st["cost"] == pytest.approx(0.50)
+    assert st["cost"] == pytest.approx(0.4946, abs=1e-3)   # still gliding; floor is 0.25
     assert len(st["derivation"]["month_ends_replayed"]) == 2
 
 
@@ -120,7 +130,7 @@ def test_carried_inputs_are_carried_exactly(repo):
     prior = json.load(open(os.path.join(repo, "ERP_HELD_STATE_2026-06.json")))
     RA.reanchor(root=repo, asof="2026-08-19")
     st = json.load(open(os.path.join(repo, "ERP_HELD_STATE_2026-08.json")))
-    for k in ("normalized_X4", "cpi_factor", "breakeven1y"):
+    for k in ("normalized_X4", "cpi_factor"):
         assert st[k] == prior[k], f"{k} must be carried unchanged until it has a live source"
 
 
@@ -135,10 +145,14 @@ def test_breakeven1y_is_never_read_off_the_pipeline_curve(repo):
     assert st["breakeven1y"] != pytest.approx(2.0783, abs=1e-3)
 
 
-def test_a_stale_master_raises_amber_but_still_publishes(repo):
+def test_a_failed_fred_read_falls_back_to_the_carry_loudly(repo, monkeypatch):
+    """No FRED key in the test environment, so the derivation fails and must fall back to the
+    carry -- written, published, and AMBER. Refusing over one series would keep vs(T) out of
+    production; going quiet would be the defect this module exists to prevent."""
+    monkeypatch.delenv("FRED_API_KEY", raising=False)
     res = RA.reanchor(root=repo, asof="2026-08-19")
     assert res["status"] == "written"
-    assert any("breakeven1y carried" in m for m in res["amber"])
+    assert any("breakeven1y CARRIED" in m for m in res["amber"])
 
 
 # ------------------------------------------------------------------ RED

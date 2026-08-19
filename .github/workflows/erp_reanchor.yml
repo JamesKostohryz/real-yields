@@ -31,6 +31,10 @@ on:
         description: "Derive and guard everything, print it, write nothing."
         type: boolean
         default: false
+      force:
+        description: "Rewrite the target vintage if it already exists (use after correcting a derivation)."
+        type: boolean
+        default: false
       asof:
         description: "ISO date to re-anchor as of (default: today UTC). Sets the target vintage."
         type: string
@@ -68,6 +72,7 @@ jobs:
         run: |
           set +e
           python reanchor.py --root . ${{ inputs.dry_run && '--dry-run' || '' }} \
+            ${{ inputs.force && '--force' || '' }} \
             ${{ inputs.asof != '' && format('--asof {0}', inputs.asof) || '' }}
           echo "rc=$?" >> $GITHUB_OUTPUT
           set -e

@@ -102,11 +102,20 @@ import run_erp_daily as RR
 # and was never told to stop. The floor is the value the formula was built to land on, on the
 # date it was built to land on it.
 #
-# James ruled 2026-08-19. Effect on the day it lands: cost 0.4946 -> 0.5000, +0.54bp on eff_coe
-# (the overlay is additive, so it passes through one for one). Left unfloored it would have cost
-# 14.7bp by 2030 and 36.4bp by 2035, then changed sign.
-COST_FLOOR = 0.50
-COST_FLOOR_FROM_YEAR = 2026.5
+# JAMES'S RULING, 2026-08-19, VERBATIM: "The cost floor should move down at whatever rate it is
+# not moving at until it reaches 0.25% and then should flatline from there."
+#
+# So the glide is NOT stopped at 0.50 -- it keeps running at its own rate and is floored at 0.25.
+# The formula reaches 0.25 in mid-2032 and is flat thereafter:
+#
+#       2026.63 (today)  0.4946        2032.00  0.2673
+#       2028             0.4377        2032.40  0.2500  <- floor engages
+#       2030             0.3532        2035+    0.2500
+#
+# This is a floor, not a stop: `max(cost_of_year(yr), 0.25)`. Nothing special happens at 2026.5.
+# The only thing being prevented is the descent through zero into a NEGATIVE cost overlay, which
+# the unfloored formula does in 2038.
+COST_FLOOR = 0.25
 
 # ============================================================================================
 # (1) GUARD BANDS
@@ -117,7 +126,7 @@ BANDS = {
     "vs_1y":       (0.5283, 2.50, 0.35),   # lo is the derived feasibility floor / median
     "corp_prem":   (0.0,    4.00, 1.00),
     "breakeven1y": (0.0,    6.00, 1.00),
-    "cost":        (0.50,   1.50, 0.05),
+    "cost":        (0.25,   1.50, 0.05),   # lo == COST_FLOOR; the glide runs down to it
     "fey_in":      (2.0,   12.00, 1.00),
     "D_in":        (12.0,  60.00, 5.00),
 }
@@ -136,10 +145,9 @@ class ReanchorRefused(Exception):
 # ============================================================================================
 
 def cost_for(asof: dt.date) -> float:
-    """The cost overlay, with the terminal floor of section (0) applied."""
+    """The cost overlay: the glide continues at its own rate, floored at COST_FLOOR."""
     yr = asof.year + (asof.timetuple().tm_yday - 1) / (366.0 if calendar.isleap(asof.year) else 365.0)
-    raw = BED.cost_of_year(yr)
-    return float(max(raw, COST_FLOOR)) if yr >= COST_FLOOR_FROM_YEAR else float(raw)
+    return float(max(BED.cost_of_year(yr), COST_FLOOR))
 
 
 def _check_source_age(path: str, asof: dt.date, log=print) -> None:
@@ -171,8 +179,92 @@ def derive_corp_prem(root: str, asof: dt.date, log=print) -> float:
     return val
 
 
+# ---------------------------------------------------------------------------- breakeven1y
+# THE 1-YEAR ANCHOR PAIR. Both halves are observations, not choices, and both are recorded here
+# so the wedge below is auditable rather than typed.
+#
+#   BE1Y_ANCHOR      2.76       ERP_HELD_STATE_2026-06.json. Verified to be the plug that makes
+#                               nominal_1y - breakeven1y reproduce the monthly master's 1-year
+#                               real yield: 3.83 - 1.069601 = 2.760399.
+#   EXPINF1Y_ANCHOR  3.439483   Cleveland Fed 1-year expected inflation for the SAME vintage,
+#                               history/expected_inflation_termstructure_v2.csv, 2026-06-30.
+#
+# WEDGE = BE1Y_ANCHOR - EXPINF1Y_ANCHOR = -0.679483. Economically this is the 1-year inflation
+# risk premium plus the TIPS liquidity effect: the gap between the breakeven the curve model
+# wants at one year and pure expected inflation. It is a slow structural quantity. Expected
+# inflation is not.
+BE1Y_ANCHOR = 2.76
+EXPINF1Y_ANCHOR = 3.439483376669958
+BE1Y_WEDGE = BE1Y_ANCHOR - EXPINF1Y_ANCHOR
+
+
 def derive_breakeven1y(root: str, prior: dict, asof: dt.date, log=print) -> tuple[float, list]:
-    """CARRIED FORWARD, WITH A STALENESS ALARM. Returns (value, amber_messages).
+    """DERIVED FROM FRED. breakeven1y = EXPINF1YR + BE1Y_WEDGE. Returns (value, amber).
+
+    WHY NOT THE OBVIOUS SOURCE. `breakeven1y` looks like an inflation breakeven and is not one.
+    It is a plug: the state's rule is `real_1y = nominal_1y - breakeven1y`, and the value exists
+    to make that identity reproduce the monthly master's 1-year real yield. An earlier draft of
+    this function read outputs/curve_latest.csv's 1-year row -- 2.0783, 68 basis points away, on
+    a row that file itself flags `reliability 0.0, provenance front-constructed`. That would have
+    moved real_1y from 1.10 to 1.78 and the published cost of equity by 4.6bp with every test
+    green. `test_breakeven1y_is_never_read_off_the_pipeline_curve` stops it recurring.
+
+    WHY NOT CARRY IT. The first working version carried it forward with an alarm, because its
+    apparent source -- history/real_yield_curve_v3_MASTER.csv -- is written by NOTHING in this
+    repository and ends 2026-06-01. James, 2026-08-19: "All of this data is carried by FRED. It
+    should all be updating every single day." He is right, and the fetcher already existed:
+    `asfp.datasources.fetch_expinf()` pulls Cleveland Fed EXPINF1YR..EXPINF30YR from FRED. It
+    was simply never pointed at this input.
+
+    WHAT IS HELD AND WHAT MOVES. The decomposition is
+        breakeven1y  =  expected inflation (MOVES, from FRED)  +  wedge (HELD)
+    rather than holding the whole number. That is a real improvement and not a complete one:
+    the wedge is still anchored to a single date, June 2026. It is a slow structural quantity --
+    an inflation risk premium plus a TIPS liquidity effect -- so holding it is defensible in a
+    way that holding a level that tracks realized inflation was not. It is NOT a measurement,
+    and it belongs on the open register until the 1-year point has a fitted construction of its
+    own. Recorded here rather than buried, because a held wedge that nobody remembers is holding
+    is exactly how this project's nine silent-input failures happened.
+
+    BY CONSTRUCTION THIS REPRODUCES THE JUNE ANCHOR EXACTLY. Feeding June's own EXPINF1YR back
+    in returns 2.76 to the last decimal, so adopting it moved no published number on the day it
+    landed; from here it tracks."""
+    amber = []
+    try:
+        from asfp import datasources as DS
+        key = os.environ.get("FRED_API_KEY")
+        if not key:
+            raise RuntimeError("FRED_API_KEY not set")
+        expinf, expinf_asof = DS.fetch_expinf(key)
+        e1 = float(expinf[0])
+        if math.isnan(e1):
+            raise RuntimeError("EXPINF1YR came back NaN")
+        val = e1 + BE1Y_WEDGE
+        log(f"  breakeven1y: {val:.4f} = EXPINF1YR {e1:.4f} + wedge {BE1Y_WEDGE:+.4f} "
+            f"(Cleveland Fed via FRED, as of {expinf_asof})")
+        # Cleveland publishes monthly. Older than a quarter means the series itself has stalled.
+        if expinf_asof:
+            ay, am = (int(x) for x in str(expinf_asof)[:7].split("-"))
+            age = (asof.year - ay) * 12 + (asof.month - am)
+            if age > 2:
+                amber.append(f"EXPINF1YR is {age} months stale (as of {expinf_asof}); "
+                             f"breakeven1y derived from it may be lagging.")
+        return val, amber
+    except Exception as e:
+        # FALL BACK TO THE CARRY, LOUDLY. A missing FRED read must not stop the re-anchor -- the
+        # other seven inputs are fine and refusing would keep vs(T) out of production over one
+        # series. But it must never be quiet.
+        prev = prior.get("breakeven1y")
+        if prev is None:
+            raise ReanchorRefused(f"cannot derive breakeven1y ({e}) and nothing to carry")
+        log(f"  breakeven1y: {float(prev):.4f} CARRIED -- FRED derivation failed ({e})")
+        amber.append(f"breakeven1y CARRIED at {float(prev):.4f}: the FRED derivation failed "
+                     f"({e}). Worth ~4.6bp per 68bp of drift in the 1-year real rate.")
+        return float(prev), amber
+
+
+def _retired_carry_breakeven1y(root: str, prior: dict, asof: dt.date, log=print):
+    """RETIRED 2026-08-19, kept only as the record of what the carry looked like.
 
     THIS FUNCTION USED TO READ outputs/curve_latest.csv AND THAT WAS WRONG. The mistake is
     recorded here rather than deleted, because it is the tenth instance of this project's
@@ -338,7 +430,7 @@ def apply_guards(new: dict, prior: dict, log=print) -> list:
 # ============================================================================================
 
 def reanchor(root: str = ".", asof: str | None = None, dry_run: bool = False,
-             log=print) -> dict:
+             force: bool = False, log=print) -> dict:
     asof_d = dt.date.fromisoformat(asof) if asof else dt.datetime.now(dt.timezone.utc).date()
     target = (asof_d.year, asof_d.month)
     target_str = "%04d-%02d" % target
@@ -346,9 +438,15 @@ def reanchor(root: str = ".", asof: str | None = None, dry_run: bool = False,
     log(f"re-anchor: target vintage {target_str}, as of {asof_d}")
 
     existing = dict((("%04d-%02d" % v), p) for v, p in HS.list_held_states(root))
-    if target_str in existing:
+    if target_str in existing and not force:
         log(f"  {target_str} already exists -- nothing to do (idempotent)")
         return dict(status="noop", vintage=target_str, amber=[])
+    if target_str in existing:
+        # --force REWRITES a vintage. Needed when a derivation is corrected mid-month, as on
+        # 2026-08-19 when breakeven1y moved from a carry to a FRED read. The PRIOR vintage for
+        # the state-machine walk is the newest one BEFORE the target, not the target itself.
+        log(f"  {target_str} exists and --force was given: rewriting it")
+        os.remove(os.path.join(root, "ERP_HELD_STATE_%s.json" % target_str))
 
     prior_path, prior = HS.resolve_held_state(root, asof=asof_d.isoformat(), log=log)
     log(f"  prior vintage: {prior['anchor_vintage']} ({os.path.basename(prior_path)})")
@@ -403,8 +501,12 @@ def reanchor(root: str = ".", asof: str | None = None, dry_run: bool = False,
                    "median": getattr(__import__("vol_scale_v3"), "VIX1Y_MEDIAN", None),
                    "vs_1y": round(vs_1y, 6)},
             "corp_prem": "asfp.volsurface.floor_from_credit_grid(outputs/market_credit_latest.csv, wedge=0.50)",
-            "breakeven1y": "CARRIED FORWARD. It is a plug that makes nominal_1y - breakeven1y reproduce real_yield_curve_v3_MASTER.csv's real1_tips; nothing in the repo writes that master and it ends 2026-06-01. NOT free -- ~4.6bp per 68bp. See derive_breakeven1y().",
-            "cost": f"build_erp_daily.cost_of_year(), floored at {COST_FLOOR} from {COST_FLOOR_FROM_YEAR}",
+            "breakeven1y": (f"EXPINF1YR (Cleveland Fed via FRED) + held wedge {BE1Y_WEDGE:+.6f}, "
+                            f"the wedge anchored on {BE1Y_ANCHOR} / {EXPINF1Y_ANCHOR:.6f} at the "
+                            f"2026-06 vintage. Expected inflation moves; the inflation-risk-plus-"
+                            f"liquidity wedge is held and is NOT a measurement -- open register."),
+            "cost": (f"build_erp_daily.cost_of_year(), glide continues at its own rate, floored "
+                     f"at {COST_FLOOR} (reached mid-2032). James's ruling 2026-08-19."),
             "fey_in_D_in": "prior state replayed through build_asof at the prior month's last business day",
             "normalized_X4_cpi_factor": "CARRIED FORWARD from the prior vintage; normalization job not built. Worth <1bp -- see the inline note.",
             "prior_values": {k: prior.get(k) for k in
@@ -441,9 +543,11 @@ def main(argv=None) -> int:
     ap.add_argument("--root", default=".")
     ap.add_argument("--asof", default=None, help="ISO date; defaults to today (UTC)")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--force", action="store_true",
+                    help="rewrite the target vintage if it already exists")
     a = ap.parse_args(argv)
     try:
-        res = reanchor(root=a.root, asof=a.asof, dry_run=a.dry_run)
+        res = reanchor(root=a.root, asof=a.asof, dry_run=a.dry_run, force=a.force)
     except ReanchorRefused as e:
         print(f"\nRED -- REFUSED, nothing written: {e}", file=sys.stderr)
         print("The prior vintage stands and the daily job continues publishing off it.",
