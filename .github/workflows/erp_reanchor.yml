@@ -1,0 +1,97 @@
+name: erp-monthly-reanchor
+
+# Writes the next ERP_HELD_STATE_<YYYY>-<MM>.json automatically.
+#
+# WHY IT EXISTS. The eight SLOW inputs to the ERP engine were refreshed by hand. The refresh was
+# never run for July or August 2026 because nobody knew it was a standing chore, which left the
+# approved vs(T) volatility term structure inert (worth 7.2bp on the published cost of equity)
+# and put the daily publish on course to hard-stop on 2026-11-01 when held_state.py's 4-month
+# staleness guard would refuse. James's ruling, 2026-08-19: "It should not require any human
+# intervention. If the model is good it is good. When making a valuation the analyst can
+# over-ride."
+#
+# THE DAILY JOB NEEDS NO EDIT. erp_daily.yml already calls resolve_held_state(), which takes the
+# newest vintage in the tree. Committing a new state file here is the whole handover.
+#
+# EXIT CODES ARE THE ALARM. 0 = GREEN, written, silent. 1 = AMBER, written AND PUBLISHING, but
+# something moved further than expected -- the run goes red so GitHub emails James the same
+# morning. The number is never suppressed; only the silence is. 2 = RED, nothing written, the
+# prior vintage stands and the daily job keeps publishing off it.
+#
+# Spec: AEG-Project/docs/SPEC-Automated-Monthly-Reanchor-2026-08-19.md
+
+on:
+  schedule:
+    # 1st of the month, 13:30 UTC. One hour after weekly-real-yields (12:00) and one after
+    # erp-daily-close (12:30), so outputs/market_credit_latest.csv is current before it is read.
+    - cron: "30 13 1 * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Derive and guard everything, print it, write nothing."
+        type: boolean
+        default: false
+      asof:
+        description: "ISO date to re-anchor as of (default: today UTC). Sets the target vintage."
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: erp-monthly-reanchor
+  cancel-in-progress: false
+
+jobs:
+  reanchor:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Fail before touching the network if the module itself is broken.
+      - name: Hermetic self-test
+        run: python -m pytest tests/test_reanchor.py -q
+
+      - name: Re-anchor
+        id: reanchor
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: |
+          set +e
+          python reanchor.py --root . ${{ inputs.dry_run && '--dry-run' || '' }} \
+            ${{ inputs.asof != '' && format('--asof {0}', inputs.asof) || '' }}
+          echo "rc=$?" >> $GITHUB_OUTPUT
+          set -e
+
+      - name: Commit + push the new held state
+        if: ${{ !inputs.dry_run && (steps.reanchor.outputs.rc == '0' || steps.reanchor.outputs.rc == '1') }}
+        run: |
+          git config user.name "asfp-bot"
+          git config user.email "asfp-bot@users.noreply.github.com"
+          git add ERP_HELD_STATE_*.json
+          git commit -m "erp-reanchor: held state $(date -u +%Y-%m)" || { echo "no changes"; exit 0; }
+          git pull --rebase --autostash origin main || true
+          git push
+
+      # Deliberately LAST, so the state is committed before the run is allowed to go red. An
+      # AMBER must publish AND shout; if this failed first the commit step would be skipped and
+      # amber would silently behave like red.
+      - name: Surface the result
+        run: |
+          rc="${{ steps.reanchor.outputs.rc }}"
+          if [ "$rc" = "0" ]; then echo "GREEN"; exit 0; fi
+          if [ "$rc" = "1" ]; then
+            echo "::error::AMBER — the held state WAS written and WILL publish, but an input moved further than its limit. Read the re-anchor log above. No action needed if the move is real."
+            exit 1
+          fi
+          echo "::error::RED — nothing was written. The prior vintage stands and the daily ERP keeps publishing off it. Read the re-anchor log above."
+          exit 1

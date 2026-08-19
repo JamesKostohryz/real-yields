@@ -136,6 +136,37 @@ jobs:
           assert len(c) == 30, "forward curve must have 30 tenors"
           print("OVERLAY VALIDATED: curve tenors=%d, eff=%s" % (len(c), e))
           PY
+
+      # EARLY WARNING, added 2026-08-19. held_state.py refuses a state older than 4 months and
+      # stops publishing. That backstop is correct and is NOT being relaxed -- but it is a wall,
+      # not a warning: the June 2026 vintage went unrefreshed for two months and the first
+      # symptom would have been the ERP simply stopping on 2026-11-01. This step turns the
+      # last stretch before the wall into a red run, roughly two months of notice. It runs AFTER
+      # the publish steps, so a stale-but-legal state still publishes; only the silence ends.
+      - name: Warn early if the monthly re-anchor is overdue
+        run: |
+          python - <<'PY'
+          import datetime as dt, sys
+          from held_state import resolve_held_state, MAX_STATE_AGE_MONTHS
+          p, s = resolve_held_state(".")
+          y, m = (int(x) for x in s["anchor_vintage"].split("-"))
+          t = dt.datetime.now(dt.timezone.utc).date()
+          age = (t.year - y) * 12 + (t.month - m)
+          vs = s.get("vs")
+          shape = ("vs(T) %d-vector" % len(vs)) if isinstance(vs, list) else ("SCALAR vs=%s" % vs)
+          print("held state %s, age %d month(s), %s" % (s["anchor_vintage"], age, shape))
+          if not isinstance(vs, list):
+              print("::error::The held state carries a SCALAR vs, not the approved vs(T) term "
+                    "structure. The engine accepts both, so this is silently charging one flat "
+                    "volatility number at every tenor. Run erp-monthly-reanchor.")
+              sys.exit(1)
+          if age >= 2:
+              print("::error::The monthly re-anchor is %d months overdue. Publishing STOPS at "
+                    "age > %d. Run the erp-monthly-reanchor workflow." % (age, MAX_STATE_AGE_MONTHS))
+              sys.exit(1)
+          print("re-anchor is current.")
+          PY
+
       - name: Commit + push the two _latest files
         run: |
           git config user.name "asfp-bot"
