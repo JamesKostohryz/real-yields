@@ -84,6 +84,15 @@ def build_asof(real_tips_5pt, norm_ey, vs, fey_in, D_in, cost, corp_prem=CORP_PR
                 preset=preset,preset_pure_risk=preset_val)
 
 # ---------- vol_scale helper (monthly re-anchor; NOT needed by the hermetic gate) ----------
+# SUPERSEDED 2026-08-18 (session 13, approved by James): this Shiller-semi-deviation method
+# with its flat [0.8,2.0] clip is being replaced at the NEXT monthly re-anchor by
+# vol_scale_v3.vol_scale_from_vix1y() -- VIX1Y as sole primary, normalized by a fixed
+# full-record median (22.62), soft-clipped (knees 0.70/1.55, asymptotes 0.40/2.50) instead of
+# flat-stopped, sourced via a six-tier chain with alarms (see vol_scale_v3.py and
+# AEG-Project/docs/AEG-Market-VolScale-*-2026-08-18.md for the full rationale and evidence).
+# Kept here unmodified for audit/comparison -- the committed June-2026 reference below
+# (VS_JUNE=0.9348) was produced by THIS function and must keep reproducing exactly; nothing
+# about this replacement is retroactive.
 def vol_scale_from_shiller(asof_month, path='/tmp/shiller/shiller.csv'):
     sh=pd.read_csv(path); sh['date']=pd.to_datetime(sh['Date'])
     for c in ['SP500','Dividend','Consumer Price Index']: sh[c]=pd.to_numeric(sh[c],errors='coerce')

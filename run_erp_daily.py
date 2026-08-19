@@ -33,6 +33,31 @@ def run(asof_date, reals_5_10_20_30, nominal_1y, sp_close, state, outdir="."):
     write_outputs(asof_date, r, outdir)
     return r
 
+# ---------- monthly re-anchor: refresh the HELD vol_scale (vs) input ----------
+# Added 2026-08-18 (session 13, approved by James). This does NOT run as part of the daily
+# job above -- `vs` stays a slow, monthly-held input by design (build_erp_daily.py's own
+# docstring, locked 2026-07-22). This is the tool a human runs at each monthly re-anchor to
+# produce the NEXT vs value, replacing the old vol_scale_from_shiller() call.
+def refresh_vol_scale(asof_date, last_known_good=None, last_known_good_date=None,
+                       vix_val=None, vix3m_val=None, vix6m_val=None, log=print):
+    """Run the six-tier VIX1Y source chain, then the soft-clip/fixed-median construction.
+    Returns a dict with the new `vs` value (or None if tier 6 refuses to publish) plus full
+    diagnostics (which tier answered, any alarm, cross-check detail) so the human re-anchoring
+    the state file can see exactly what happened before adopting the number. Does NOT write to
+    ERP_HELD_STATE_*.json itself -- that adoption step stays a deliberate, reviewed action."""
+    import vol_scale_v3 as v3
+    fetch = v3.fetch_vix1y_sixtier(asof_date=asof_date, last_known_good=last_known_good,
+                                    last_known_good_date=last_known_good_date,
+                                    vix_val=vix_val, vix3m_val=vix3m_val, vix6m_val=vix6m_val,
+                                    log=log)
+    if fetch["value"] is None:
+        return dict(vs=None, vix1y=None, **fetch)
+    vs = v3.vol_scale_from_vix1y(fetch["value"])
+    log(f"  vol_scale_v3: VIX1Y={fetch['value']:.3f} / median={v3.VIX1Y_MEDIAN} "
+        f"-> vs={vs:.4f}  (tier {fetch['tier_used']}, alarm={fetch['alarm']})")
+    return dict(vs=vs, vix1y=fetch["value"], **fetch)
+
+
 SP500_SERIES = "SP500"   # FRED S&P 500 index level (daily close). ERP: confirm on the live eyeball.
 
 def fetch_daily_inputs(asof_date, api_key=None):
