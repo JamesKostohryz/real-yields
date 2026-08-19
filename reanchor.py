@@ -36,9 +36,10 @@ THE EIGHT SLOW INPUTS AND WHERE EACH COMES FROM
   D_in          duration state <- the prior state's D_out, likewise
   corp_prem     ERP floor      <- floor_from_credit_grid(cg, wedge=0.50) on
                                   outputs/market_credit_latest.csv (rewritten every weekday)
-  breakeven1y   1y breakeven   <- outputs/curve_latest.csv, maturity==1.0, column "breakeven"
-                                  (same file, same daily cadence)
-  cost          cost overlay   <- cost_of_year(), FLOORED at 0.50 — see COST_FLOOR below
+  breakeven1y   1y "breakeven" <- EXPINF1YR (Cleveland Fed via FRED) + a held wedge. NOT the
+                                  1-year row of outputs/curve_latest.csv — see
+                                  derive_breakeven1y() for why that is 68bp wrong.
+  cost          cost overlay   <- cost_of_year(), glide continues, FLOORED at 0.25 (mid-2032)
   normalized_X4 normalized EPS <- carried forward; the normalization job is not built yet
   cpi_factor    deflator       <- carried forward, same reason
 
@@ -98,9 +99,7 @@ import run_erp_daily as RR
 #       2026.63   0.4946        2038.03   0.0000  <- crosses zero
 #       2030      0.3532        2040     -0.0899
 #
-# A cost overlay that goes negative is not a cost. This is a glide that reached its destination
-# and was never told to stop. The floor is the value the formula was built to land on, on the
-# date it was built to land on it.
+# A cost overlay that goes negative is not a cost.
 #
 # JAMES'S RULING, 2026-08-19, VERBATIM: "The cost floor should move down at whatever rate it is
 # not moving at until it reaches 0.25% and then should flatline from there."
