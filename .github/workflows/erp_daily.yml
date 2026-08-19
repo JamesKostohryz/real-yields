@@ -61,7 +61,7 @@ jobs:
       - name: Held-state pointer (newest vintage resolves, is fresh, and name matches contents)
         run: python -m pytest tests/test_held_state.py -q
       - name: Live preview (READ-ONLY; no commit)
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.live_preview == 'true' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && fromJSON(inputs.live_preview) }}
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: |
@@ -95,7 +95,7 @@ jobs:
 
   publish:
     needs: gate
-    if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.publish == 'true') }}
+    if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && fromJSON(inputs.publish)) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
