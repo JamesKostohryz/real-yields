@@ -36,9 +36,21 @@ def test_writer_overlay_contract():
         and abs(r["eff_coe"] - 5.748) < 0.011, "June effective tie failed"  # preset B, landed 2026-08-12
     # load_effective already enforces eff_coe == eff_tips_ry + eff_erp within TOL_IDENT
     # and the live path: the resolver must answer on this tree, with the same file
+    # BROKEN 2026-08-19 AND FIXED HERE. This used to assert the resolver returns the JUNE file.
+    # That was true only while June was the ONLY vintage in the tree, and it was written in the
+    # same commit that made the resolver take the NEWEST vintage -- so the assertion held right
+    # up until the mechanism it guards actually did something. The first automated re-anchor
+    # (ERP_HELD_STATE_2026-08.json) turned the whole daily publish red.
+    #
+    # A test that fails the moment the system works is not a regression test, it is a pin on a
+    # date. What this step is FOR is the live path: that a resolver answer exists, is fresh, and
+    # that its filename agrees with its contents. That is now what it checks. The June
+    # reproduction above is unaffected -- it reads hs.JUNE_REPRO_STATE directly and always did.
     p, s = hs.resolve_held_state(ROOT, log=lambda *_a: None)
-    assert os.path.basename(p) == hs.JUNE_REPRO_STATE and s == state, \
-        "resolver disagrees with the June pin on the tree as it stands -- this change was meant to be a no-op"
+    assert os.path.basename(p).startswith("ERP_HELD_STATE_"), f"resolver returned {p!r}"
+    assert s["anchor_vintage"] == os.path.basename(p)[len("ERP_HELD_STATE_"):-len(".json")], \
+        "resolved held state's filename disagrees with its own anchor_vintage"
+    assert "vs" in s and "fey_in" in s and "D_in" in s, "resolved held state is missing inputs"
     print("writer<->overlay contract OK: load_curve 30 tenors, load_effective identity holds, eff ties June")
 
 if __name__ == "__main__":

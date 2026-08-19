@@ -92,13 +92,23 @@ def test_boundary_exactly_at_the_age_limit_is_allowed():
         hs.resolve_held_state(d, asof="2026-09-01", max_age_months=4, log=lambda *_a: None)
 
 
-def test_live_tree_resolves_to_the_same_file_the_hardcodes_used():
-    """The no-op proof. On the tree as landed, the resolver must return exactly the file
-    that was previously typed into the workflow, so this change cannot move a number."""
-    path, state = hs.resolve_held_state(ROOT, asof="2026-08-18", log=lambda *_a: None)
-    assert os.path.basename(path) == hs.JUNE_REPRO_STATE
-    live = json.load(open(os.path.join(ROOT, hs.JUNE_REPRO_STATE)))
-    assert state == live
+def test_live_tree_resolves_to_its_newest_vintage():
+    """RETIRED AND REPLACED 2026-08-19. This was 'the no-op proof': on the tree as landed the
+    resolver had to return exactly the file previously typed into the workflow, so that
+    introducing the resolver could not move a number. That was the right test for one day.
+
+    It was an assertion that JUNE IS THE NEWEST VINTAGE, and the resolver's whole purpose is to
+    stop being true the moment a newer one lands. The first automated re-anchor wrote
+    ERP_HELD_STATE_2026-08.json and this test turned the entire daily ERP publish red -- a test
+    that fails when the system starts working is a pin on a date, not a regression test.
+
+    What survives is the property that actually matters and is true forever: the resolver
+    returns the NEWEST vintage in the tree, and that file's name agrees with its contents."""
+    path, state = hs.resolve_held_state(ROOT, log=lambda *_a: None)
+    newest = hs.list_held_states(ROOT)[-1]
+    assert os.path.abspath(path) == os.path.abspath(newest[1]), "resolver did not take the newest"
+    assert state["anchor_vintage"] == "%04d-%02d" % newest[0]
+    assert state == json.load(open(path))
 
 
 if __name__ == "__main__":

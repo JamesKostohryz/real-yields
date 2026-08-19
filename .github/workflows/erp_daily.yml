@@ -51,7 +51,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt pytest
       - name: Smoke — v4 library loads (fail-closed on import/precompute)
         run: python -c "import build_erp_daily as b; print('build_erp_daily import OK; params locked, TMAX=%d' % b.TMAX)"
       - name: Acceptance gate — hermetic self-test (reproduces committed June <1bp, no external files)
@@ -105,7 +105,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt pytest
       - name: Rebuild + write the two _latest files (fail-closed on fetch)
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
