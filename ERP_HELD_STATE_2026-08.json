@@ -35,9 +35,9 @@
   ],
   "fey_in": 5.930512,
   "D_in": 25.424575,
-  "cost": 0.5,
+  "cost": 0.494626,
   "corp_prem": 1.04,
-  "breakeven1y": 2.76,
+  "breakeven1y": 1.71422,
   "normalized_X4": 234.1507,
   "cpi_factor": 0.99844,
   "sources": {
@@ -49,7 +49,7 @@
   },
   "derivation": {
     "written_by": "reanchor.py",
-    "written_at": "2026-08-19T17:02:31+00:00",
+    "written_at": "2026-08-19T17:43:47+00:00",
     "prior_vintage": "2026-06",
     "month_ends_replayed": [
       "2026-06-30",
@@ -64,8 +64,8 @@
       "vs_1y": 1.014147
     },
     "corp_prem": "asfp.volsurface.floor_from_credit_grid(outputs/market_credit_latest.csv, wedge=0.50)",
-    "breakeven1y": "CARRIED FORWARD. It is a plug that makes nominal_1y - breakeven1y reproduce real_yield_curve_v3_MASTER.csv's real1_tips; nothing in the repo writes that master and it ends 2026-06-01. NOT free -- ~4.6bp per 68bp. See derive_breakeven1y().",
-    "cost": "build_erp_daily.cost_of_year(), floored at 0.5 from 2026.5",
+    "breakeven1y": "EXPINF1YR (Cleveland Fed via FRED) + held wedge -0.679483, the wedge anchored on 2.76 / 3.439483 at the 2026-06 vintage. Expected inflation moves; the inflation-risk-plus-liquidity wedge is held and is NOT a measurement -- open register.",
+    "cost": "build_erp_daily.cost_of_year(), glide continues at its own rate, floored at 0.25 (reached mid-2032). James's ruling 2026-08-19.",
     "fey_in_D_in": "prior state replayed through build_asof at the prior month's last business day",
     "normalized_X4_cpi_factor": "CARRIED FORWARD from the prior vintage; normalization job not built. Worth <1bp -- see the inline note.",
     "prior_values": {
@@ -76,7 +76,7 @@
       "breakeven1y": 2.76
     },
     "amber": [
-      "breakeven1y carried at 2.7600: real_yield_curve_v3_MASTER.csv ends 2026-06, 2 months stale, and nothing in the repository writes it. Worth ~4.6bp per 68bp of drift in the 1-year real rate."
+      "breakeven1y moved 1.0458 (limit 1.0): 2.7600 -> 1.7142"
     ]
   }
 }
