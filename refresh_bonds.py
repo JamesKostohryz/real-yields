@@ -53,6 +53,9 @@ EODHD_BASE = "https://eodhd.com/api"
 YTW_WINDOW_DAYS = 7
 MIN_YEARS, MAX_YEARS = 0.4, 40.0
 MIN_BONDS = 4                      # refuse to write a thinner list than this
+# A core name shorter than this cannot discriminate one issuer from another by name, so the
+# name fallback is not attempted at all. See the block in fetch_bonds for what it cost.
+MIN_CORE_NAME_CHARS = 4
 
 # Only needed for special cases; maps TICKER -> list of extra CUSIP6 prefixes
 # to also treat as this issuer (e.g. {"T": ["001957"]} to add AT&T Corp /Old/).
@@ -242,12 +245,37 @@ def build_rows(ticker, api_key, as_of=None):
     # primary pass: CUSIP6 match
     rows = _collect(cands, api_key, as_of, name, ticker, accept_issuer)
     if len(rows) < MIN_BONDS:
-        # fallback: core-name-in-description match (still avoids other issuers)
+        # FALLBACK: core-name match. Two guards, both added 2026-08-20 after this fallback
+        # attributed NINE OTHER COMPANIES' BONDS to Nu Holdings and every gate reported success.
+        #
+        # WHAT HAPPENED. core_name("Nu Holdings Ltd") is "Nu" -- `holdings` and `ltd` are both
+        # stripped as corporate suffixes. Nu Holdings is a Cayman issuer with no US CUSIP debt,
+        # so the CUSIP6 pass came back thin and this fallback ran a SUBSTRING match on "NU". It
+        # matched NUCOR (x4), NUSTAR LOGISTICS (x2), NUTRIEN (x2) and MEAD JOHNSON NUTRITION.
+        # Nine bonds, none of them the company's. MIN_BONDS was satisfied, so the file was
+        # written, a modal rating of BBB was inferred from bonds carrying no rating at all, and
+        # a cost-of-debt curve for a Brazilian digital bank was published off a steelmaker's,
+        # a pipeline partnership's and a fertiliser producer's paper.
+        #
+        # G1  A core name this short cannot discriminate. Two or three characters will be a
+        #     prefix of dozens of unrelated issuers, and the honest answer for a company whose
+        #     name reduces to that is NO BONDS -- which the pipeline already handles, as the
+        #     pure-rating path.
+        # G2  WHOLE-WORD, not substring. "NU" as a word does not appear in "NUCOR CORP".
+        #     This alone would have caught it; both are here because the two failures are
+        #     different and either can happen alone.
         core = core_name(name).upper()
-        print(f"  CUSIP6 match thin ({len(rows)}); falling back to name match on "
-              f"'{core}'")
-        rows = _collect(cands, api_key, as_of, name, ticker,
-                        lambda bi, bn: core in (bn or "").upper())
+        if len(core) < MIN_CORE_NAME_CHARS:
+            print(f"  CUSIP6 match thin ({len(rows)}) and the core name {core!r} is too short "
+                  f"to match on safely (< {MIN_CORE_NAME_CHARS} chars). NOT falling back to a "
+                  f"name match: a short prefix silently collects other issuers' bonds. This "
+                  f"issuer will be treated as having no bonds, which is the honest state.")
+        else:
+            print(f"  CUSIP6 match thin ({len(rows)}); falling back to WHOLE-WORD name match "
+                  f"on '{core}'")
+            _word = re.compile(r"\b" + re.escape(core) + r"\b", re.I)
+            rows = _collect(cands, api_key, as_of, name, ticker,
+                            lambda bi, bn: bool(_word.search(bn or "")))
     if len(rows) < MIN_BONDS:
         raise RuntimeError(f"{ticker}: only {len(rows)} usable bonds — refusing to "
                            f"overwrite bonds/{ticker}.csv")
