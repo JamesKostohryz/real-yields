@@ -1,0 +1,14 @@
+field,value
+ticker,LIN
+price,481.1300048828125
+market_equity,221791388075.0697
+nfo,24982000000.0
+L,0.10123457879664216
+lambda0,0.1126373761254623
+equity_vol,0.19163435562757522
+sigma_V,0.1722343323526517
+avg_correlation,0.35
+market_value_of_debt,28069000000.0
+rating,BBB
+offset,1.0
+mvd_basis,book-par

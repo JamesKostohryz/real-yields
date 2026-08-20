@@ -1,0 +1,10 @@
+field,value
+ticker,LIN
+generated_utc,2026-08-20 05:03 UTC
+generated_iso,2026-08-20T05:03:24Z
+bonds_source,none (pure-rating)
+n_bonds,0
+run_id,32334120000
+git_sha,262f1de
+obs_category,B
+ory_override,

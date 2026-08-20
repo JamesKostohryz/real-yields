@@ -8,4 +8,4 @@ equity_duration_yrs,25.16
 forward_curve_file,TODAY_forward_curve_latest.csv
 vintage_age_days,1
 vintage_stale,false
-overlay_applied_utc,2026-08-20T02:40:42Z
+overlay_applied_utc,2026-08-20T05:03:25Z
