@@ -8,11 +8,11 @@ on:
         required: false
         default: ""
       obs_category:
-        description: "Obsolescence durability (A=durable, B=moderate, C=exposed)"
+        description: "Obsolescence durability (A=durable, B=moderate, C=exposed). KEEP means: reuse what run_stamp_<T>.csv already records for this ticker."
         required: false
         type: choice
-        default: "B"
-        options: ["A", "B", "C"]
+        default: "KEEP"
+        options: ["KEEP", "A", "B", "C"]
       ory_override:
         description: "Obsolescence Risk Year override (optional; blank = use the category default)"
         required: false
@@ -50,11 +50,44 @@ jobs:
           TICKER: "${{ github.event.inputs.ticker }}"
         run: python refresh_bonds.py
 
+      # KEEP reuses the durability judgment already recorded for this ticker instead of
+      # re-deciding it. Added 2026-08-20 so a SCHEDULED refresh is possible at all: re-running
+      # a company on the default "B" would silently overwrite an A or a C with no diff to see,
+      # and the category lands in coe_v2_<T>_latest_annual.csv, which is the cost-of-equity
+      # curve the AEG engine discounts with. A ticker with no recorded category and no explicit
+      # choice falls back to B exactly as before -- that is the pre-existing default, made
+      # visible rather than changed.
+      - name: Resolve the durability category
+        id: obs
+        env:
+          TICKER: "${{ github.event.inputs.ticker }}"
+          REQUESTED: "${{ github.event.inputs.obs_category }}"
+        run: |
+          set -euo pipefail
+          T=$(echo "${TICKER}" | tr '[:lower:]' '[:upper:]')
+          CAT="${REQUESTED:-KEEP}"
+          ORY=""
+          if [ "$CAT" = "KEEP" ] || [ -z "$CAT" ]; then
+            STAMP="outputs/run_stamp_${T}.csv"
+            if [ -f "$STAMP" ]; then
+              CAT=$(awk -F, '$1=="obs_category"{print $2}' "$STAMP" | tr -d '\r' | head -1)
+              ORY=$(awk -F, '$1=="ory_override"{print $2}' "$STAMP" | tr -d '\r' | head -1)
+            fi
+            if [ -z "$CAT" ]; then
+              CAT="B"
+              echo "::notice::${T} has no recorded durability category; using the standing default B. Dispatch this workflow once with A, B or C explicitly to record the judgment."
+            else
+              echo "::notice::${T} reusing recorded durability category ${CAT}${ORY:+ (ORY ${ORY})}"
+            fi
+          fi
+          echo "cat=$CAT" >> "$GITHUB_OUTPUT"
+          echo "ory=$ORY" >> "$GITHUB_OUTPUT"
+
       - name: Pull company data
         env:
           TICKER: "${{ github.event.inputs.ticker }}"
-          OBS_CATEGORY: "${{ github.event.inputs.obs_category }}"
-          ORY_OVERRIDE: "${{ github.event.inputs.ory_override }}"
+          OBS_CATEGORY: "${{ steps.obs.outputs.cat }}"
+          ORY_OVERRIDE: "${{ github.event.inputs.ory_override != '' && github.event.inputs.ory_override || steps.obs.outputs.ory }}"
         run: python -m asfp.run_company
 
       # Decision B (ERP 0700): the valuation basis is ERP's forward curve, not the

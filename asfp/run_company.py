@@ -116,6 +116,18 @@ def main():
         {"field": "n_bonds", "value": 0 if bonds is None else len(bonds)},
         {"field": "run_id", "value": os.environ.get("GITHUB_RUN_ID", "local")},
         {"field": "git_sha", "value": os.environ.get("GITHUB_SHA", "")[:7]},
+        # THE DURABILITY JUDGMENT, RECORDED 2026-08-20. OBS_CATEGORY picks the obsolescence
+        # elevator preset and therefore lands directly in coe_v2_<T>_latest_annual.csv -- the
+        # cost-of-equity curve the AEG engine discounts with. It defaults to "B" and, until
+        # this line, was written down NOWHERE. Every company's published cost of equity
+        # embedded a durability judgment that could not be read back, compared, or reused.
+        #
+        # It has to be readable for a scheduled refresh to exist at all: re-running a company
+        # without knowing its category would silently re-decide it, which is worse than not
+        # refreshing. aeg-valuation's rate-side refresh reads these two fields.
+        {"field": "obs_category",
+         "value": os.environ.get("OBS_CATEGORY", "B").strip().upper()[:1] or "B"},
+        {"field": "ory_override", "value": (os.environ.get("ORY_OVERRIDE") or "").strip()},
     ]
     pd.DataFrame(stamp).to_csv(f"{OUTDIR}/run_stamp_{ticker}.csv", index=False)
     written.append(f"run_stamp_{ticker}.csv")
