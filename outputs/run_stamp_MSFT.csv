@@ -1,0 +1,8 @@
+field,value
+ticker,MSFT
+generated_utc,2026-08-20 02:40 UTC
+generated_iso,2026-08-20T02:40:40Z
+bonds_source,committed-file
+n_bonds,18
+run_id,32325441990
+git_sha,f021e6f
