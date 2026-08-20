@@ -1,3 +1,31 @@
+"""SUPERSEDED 2026-08-20 — THIS DOES NOT RUN.
+
+James's instruction, 2026-08-20: "whatever existed before will be completely superseded by what
+we are doing now."
+
+It built a historical cost of equity on `FINAL_decomposition_v4_1877_2026.csv`, which sat 0.52
+percentage points above the live equity risk premium for the same month (3.887 against 3.370 for
+June 2026) with no splice logic anywhere. Nothing built that file, it was read from a hardcoded
+/tmp path, and its pre-1995 cost column follows a rule that exists in no code.
+
+THE REPLACEMENT is in the aeg-valuation repository:
+    idio/market_semidev_bridge.py   the market risk input, reconstructed to 1929, pre-registered
+    idio/market_coe_history.py      real_rf + market_erp, monthly, on current components
+    outputs/market_coe_history.csv  1,149 months, 1929-10 to 2026-06
+
+Refusing rather than being deleted, because a deleted script leaves 28 stale output files with
+no explanation and the next person rebuilds it.
+"""
+import sys
+
+raise SystemExit(
+    "SUPERSEDED 2026-08-20. This produced a historical cost of equity on an equity risk premium "
+    "0.52pp above the live one, from a file nothing builds. Use aeg-valuation's "
+    "idio/market_coe_history.py -- see history/SUPERSEDED_2026-08-20_decomposition_v4.csv and "
+    "outputs/superseded_2026-08-20/README.md.")
+
+# ---- original below, unreachable, kept for reference ----
+
 """
 coe_history.py — GENERALIZED historical cost-of-equity series, per company (any ticker).
 Real & nominal, monthly, back to the ticker's return history.
