@@ -137,6 +137,34 @@ jobs:
           print("OVERLAY VALIDATED: curve tenors=%d, eff=%s" % (len(c), e))
           PY
 
+      # ⛔ APPLY THE OVERLAY HERE, added 2026-08-22. Until today this job wrote only the two
+      # history/ files and left outputs/ to "the next pipeline run". The weekly job fires at
+      # 12:54 UTC and this one at 13:23 -- twenty-nine minutes LATER -- so outputs/ was overlaid
+      # with YESTERDAY's curve every single day and nothing said so. Verified 2026-08-22: every
+      # tenor of outputs/curve_latest_annual.csv matched the 2026-08-20 history file while the
+      # 2026-08-21 file sat published beside it. The valuation engine reads outputs/, so it was
+      # discounting on a curve one session old, permanently.
+      #
+      # Publishing a rate and leaving its consumer on the previous one is not a scheduling detail;
+      # it is a stale number wearing a fresh timestamp.
+      - name: Apply the overlay so outputs/ carries TODAY's curve, not yesterday's
+        run: |
+          python apply_erp_overlay.py
+          python tests/test_overlay_units.py
+
+      - name: Commit the refreshed outputs
+        run: |
+          git config user.name  "erp-daily"
+          git config user.email "actions@github.com"
+          git add outputs/ || true
+          if git diff --cached --quiet; then
+            echo "outputs already current"
+          else
+            git commit -m "erp-daily: overlay today's curve onto outputs/ $(date -u +%Y-%m-%d)"
+            git pull --rebase --autostash
+            git push
+          fi
+
       # EARLY WARNING, added 2026-08-19. held_state.py refuses a state older than 4 months and
       # stops publishing. That backstop is correct and is NOT being relaxed -- but it is a wall,
       # not a warning: the June 2026 vintage went unrefreshed for two months and the first

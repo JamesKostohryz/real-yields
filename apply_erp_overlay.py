@@ -134,6 +134,42 @@ def vintage_age_days(eff, today=None):
 
 
 # ------------------------------------------------------------------ targets
+# ---------------------------------------------------------------------------------------------
+# ⛔ UNITS. THE `_annual` FILES ARE ANNUAL-COMPOUNDED. THE OVERLAY WAS WRITING cc INTO THEM.
+#
+# Found 2026-08-22 by James, who noticed the screen quoting a 30-year real yield of 3.03% when
+# FRED's DFII30 read 2.95%. It was neither: `outputs/curve_latest_annual.csv` carried the RAW
+# continuously-compounded value from history/TODAY_forward_curve_latest.csv, divided by 100 and
+# written into a file whose own contract (aeg-valuation rate_feed.py) is
+#     *_latest.csv  -> continuously-compounded PERCENT
+#     *_annual.csv  -> ANNUAL-COMPOUNDED DECIMAL,  annual = exp(cc/100) - 1
+#
+# `asfp/run.py` builds that file CORRECTLY, applying units.annualize_rate to every rate column.
+# This overlay then overwrote those values with cc/100 and undid it. Verified across the curve:
+# every tenor of the published outputs file matched the raw cc of the history file exactly.
+#
+# The error is small and one-directional -- it UNDERSTATES every real rate, so it OVERSTATES
+# every valuation the engine produces: 1.8bp at tenor 1, 3.2bp at 10, 4.6bp at 30, growing with
+# the rate. It survived because both numbers are plausible reals a few basis points apart, which
+# is precisely the profile of a number that is silently wrong while every gate stays green.
+#
+# THE CONVERSION IS PER COLUMN TYPE, not blanket. real-yields' own units.py draws the line:
+#   RATE / YIELD  (real, real_fwd1y, real_rf)   ->  annual = exp(cc/100) - 1   [annualize_rate]
+#   PREMIUM       (market_erp)                  ->  plain cc/100               [to_decimal]
+# A premium is an additive spread on top of a base rate, and the engine's decomposition requires
+# the pieces to SUM to the annual total, so premia must NOT be compounded. Applying expm1 to
+# everything would fix one error by introducing a smaller one.
+RATE_TARGETS = frozenset({"real", "real_fwd1y", "real_rf"})
+
+
+def _to_annual(target, cc_percent):
+    """cc percent -> the units the `_annual` contract requires for THIS column."""
+    if target in RATE_TARGETS:
+        return math.expm1(cc_percent / 100.0)
+    return cc_percent / 100.0          # a premium stays additive; see the note above
+# ---------------------------------------------------------------------------------------------
+
+
 def overlay_curve(path, curve, mapping):
     fn, rows = _rows(path)
     for row in rows:
@@ -142,7 +178,7 @@ def overlay_curve(path, curve, mapping):
             continue
         for target, source in mapping.items():
             if target in row:
-                row[target] = f"{curve[t][source] / 100:.9f}"
+                row[target] = f"{_to_annual(target, curve[t][source]):.9f}"
         if "nominal" in row and "breakeven" in row:
             row["nominal"] = f'{(1 + float(row["real"])) * (1 + float(row["breakeven"])) - 1:.9f}'
         if "nominal_fwd1y" in row and "breakeven_fwd1y" in row:
@@ -159,7 +195,7 @@ def overlay_coe_termstructure(path, curve, mapping):
         if t not in curve:
             continue
         for target, source in mapping.items():
-            row[target] = f"{curve[t][source] / 100:.9f}"
+            row[target] = f"{_to_annual(target, curve[t][source]):.9f}"
         rf, erp = float(row["real_rf"]), float(row["market_erp"])
         idio = float(row["idiosyncratic"])          # NEVER overwritten
         row["company_erp"] = f"{erp + idio:.9f}"
