@@ -167,9 +167,33 @@ def test_a_missing_curve_file_falls_back_to_the_carry_loudly(repo):
 
 def test_a_front_constructed_point_is_flagged_every_month(repo):
     """No TIPS matures inside a year, so the 1-year real yield is extrapolated. That is a
-    standing property of this tenor, so it is reported every month rather than accepted once."""
+    standing property of this tenor, so it is reported every month rather than accepted once.
+
+    2026-08-24: reported as a NOTICE, not an amber. It is reported every month *because it is
+    true every month*, which is exactly why it must not set the exit code -- an alarm that
+    fires on every run is not an alarm. It must stay OUT of amber, and both halves of that are
+    asserted here."""
     res = RA.reanchor(root=repo, asof="2026-08-19")
-    assert any("front-CONSTRUCTED" in m for m in res["amber"])
+    assert any("front-CONSTRUCTED" in m for m in res["notes"])
+    assert not any("front-CONSTRUCTED" in m for m in res["amber"])
+
+
+def test_a_standing_notice_alone_does_not_fail_the_run(repo):
+    """The whole point of the split. A month whose only flag is the front-constructed 1-year
+    point exits 0. If this ever goes red again, erp-monthly-reanchor is red forever and the
+    badge stops meaning anything -- the `coe-history` failure, repeated."""
+    res = RA.reanchor(root=repo, asof="2026-08-19")
+    assert res["notes"] and not res["amber"]
+    assert RA.main(["--root", repo, "--asof", "2026-08-19", "--force"]) == 0
+
+
+def test_a_carried_breakeven_is_still_amber_not_a_notice(repo):
+    """The other half: a derivation that FAILED is an event and must still shout. Proving the
+    split did not quietly demote real incidents along with the standing property."""
+    os.remove(os.path.join(repo, "outputs", "curve_latest.csv"))
+    res = RA.reanchor(root=repo, asof="2026-08-19")
+    assert any("breakeven1y CARRIED" in m for m in res["amber"])
+    assert not any("CARRIED" in m for m in res["notes"])
 
 
 # ------------------------------------------------------------------ RED

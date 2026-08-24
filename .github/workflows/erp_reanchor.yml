@@ -13,10 +13,23 @@ name: erp-monthly-reanchor
 # THE DAILY JOB NEEDS NO EDIT. erp_daily.yml already calls resolve_held_state(), which takes the
 # newest vintage in the tree. Committing a new state file here is the whole handover.
 #
-# EXIT CODES ARE THE ALARM. 0 = GREEN, written, silent. 1 = AMBER, written AND PUBLISHING, but
-# something moved further than expected -- the run goes red so GitHub emails James the same
-# morning. The number is never suppressed; only the silence is. 2 = RED, nothing written, the
-# prior vintage stands and the daily job keeps publishing off it.
+# EXIT CODES ARE THE ALARM. 0 = GREEN, written; possibly with standing NOTICES printed, which
+# are structural properties true every month by construction and are deliberately NOT alarms.
+# 1 = AMBER, written AND PUBLISHING, but an EVENT occurred -- an input moved past its move limit,
+# or a derivation failed and its value had to be carried -- so the run goes red and GitHub emails
+# James the same morning. The number is never suppressed; only the silence is. 2 = RED, nothing
+# written, the prior vintage stands and the daily job keeps publishing off it.
+#
+# THE NOTICE TIER WAS ADDED 2026-08-24, AND IT IS A CORRECTION. Run 5 of 2026-08-19 exited 1 and
+# this file told James an input had "moved further than its limit". It had not. Every one of the
+# six guarded inputs was well inside its band -- the largest was D_in at 0.70 against a limit of
+# 5.00. The single flag was that the 1-year breakeven comes from a front-constructed curve point,
+# which reanchor.py's own comment calls "a standing property of the 1-year tenor, not an
+# incident", raised deliberately every month. Pooled with amber, that guaranteed a red run every
+# month forever for a condition that cannot change until the 1-year real yield gets a
+# construction of its own -- and this repository already had `coe-history` demonstrating what a
+# permanently red badge does to everyone's willingness to read a red badge. Events shout;
+# properties are recorded.
 #
 # Spec: AEG-Project/docs/SPEC-Automated-Monthly-Reanchor-2026-08-19.md
 
@@ -93,9 +106,12 @@ jobs:
       - name: Surface the result
         run: |
           rc="${{ steps.reanchor.outputs.rc }}"
-          if [ "$rc" = "0" ]; then echo "GREEN"; exit 0; fi
+          if [ "$rc" = "0" ]; then
+            echo "GREEN — written. Any NOTICE lines in the re-anchor log above are standing structural properties, true every month by construction, and are recorded in the state's notes rather than raised as alarms."
+            exit 0
+          fi
           if [ "$rc" = "1" ]; then
-            echo "::error::AMBER — the held state WAS written and WILL publish, but an input moved further than its limit. Read the re-anchor log above. No action needed if the move is real."
+            echo "::error::AMBER — the held state WAS written and WILL publish, but an EVENT occurred: an input moved past its month-on-month move limit, or a derivation failed and its value was carried. Read the re-anchor log above for which. No action needed if the move is real."
             exit 1
           fi
           echo "::error::RED — nothing was written. The prior vintage stands and the daily ERP keeps publishing off it. Read the re-anchor log above."

@@ -58,7 +58,18 @@ number nobody could ever have questioned.
   GREEN  every input inside its absolute band and inside its month-on-month move limit.
          Write, publish, say nothing.
 
-  AMBER  inside the absolute band, past the move limit. WRITE AND PUBLISH ANYWAY — markets do
+  NOTICE a STANDING structural property of an input, true every month by construction and not
+         an event: today, only that the 1-year breakeven comes from a front-constructed curve
+         point because no TIPS matures inside a year. Written into the state's `notes`, printed,
+         and exit ZERO. Added 2026-08-24: this class used to be pooled with AMBER, which meant
+         the workflow was guaranteed to go red on EVERY future monthly run for a condition that
+         cannot change until the 1-year real yield is given a construction of its own. A red
+         badge that is always red is not an alarm; it trains the reader to ignore red badges,
+         which is the failure `coe-history` had already demonstrated in this same repository.
+         The distinction is event vs property, and only events are allowed to shout.
+
+  AMBER  inside the absolute band, past the move limit — or an input that had to be CARRIED
+         because its derivation failed. Both are EVENTS. WRITE AND PUBLISH ANYWAY — markets do
          move that far and suppressing a real move is worse than reporting it — but exit
          non-zero so the workflow run goes red and GitHub emails James the same morning.
          The number is never suppressed. Only the silence is.
@@ -216,11 +227,18 @@ BE1Y_CURVE_FILE = os.path.join("outputs", "curve_latest.csv")
 BE1Y_TENOR = 1.0
 
 
-def derive_breakeven1y(root: str, prior: dict, asof: dt.date, log=print) -> tuple[float, list]:
+def derive_breakeven1y(root: str, prior: dict, asof: dt.date,
+                       log=print) -> tuple[float, list, list]:
     """The 1-year MARKET breakeven -- nominal Treasury minus TIPS real -- from the curve the
     weekday pipeline (`asfp.run`, workflow `weekly-real-yields`) already publishes. Returns
-    (value, amber). See the block above for why this series and not expected inflation."""
-    amber = []
+    (value, amber, notes). See the block above for why this series and not expected inflation.
+
+    THE SPLIT, 2026-08-24. `amber` is for EVENTS and exits 1; `notes` is for STANDING PROPERTIES
+    and exits 0. The front-constructed flag below is a property of the 1-year tenor itself -- it
+    was true in June, it is true now, and it stays true until a TIPS matures inside a year or the
+    point gets a construction of its own. Pooling it with amber made the monthly run red forever.
+    The CARRIED branch stays amber, because a derivation that FAILED is an event."""
+    amber, notes = [], []
     path = os.path.join(root, BE1Y_CURVE_FILE)
     try:
         _check_source_age(path, asof, log=log)
@@ -239,20 +257,20 @@ def derive_breakeven1y(root: str, prior: dict, asof: dt.date, log=print) -> tupl
         # extrapolated; that is a standing property of the 1-year tenor, not an incident.
         try:
             if rel is not None and float(rel) <= 0.0:
-                amber.append(
+                notes.append(
                     f"breakeven1y {val:.4f} comes from a front-CONSTRUCTED curve point "
                     f"(reliability {float(rel):.1f}): no TIPS matures inside a year, so the "
                     f"1-year real yield is extrapolated. Bounded -- ~4.6bp of eff_coe per 68bp.")
         except (TypeError, ValueError):
             pass
-        return val, amber
+        return val, amber, notes
     except Exception as e:
         prev = prior.get("breakeven1y")
         if prev is None:
             raise ReanchorRefused(f"cannot derive breakeven1y ({e}) and nothing to carry")
         log(f"  breakeven1y: {float(prev):.4f} CARRIED -- derivation failed ({e})")
         amber.append(f"breakeven1y CARRIED at {float(prev):.4f}: derivation failed ({e}).")
-        return float(prev), amber
+        return float(prev), amber, notes
 
 
 def _retired_carry_breakeven1y(root: str, prior: dict, asof: dt.date, log=print):
@@ -432,7 +450,7 @@ def reanchor(root: str = ".", asof: str | None = None, dry_run: bool = False,
     existing = dict((("%04d-%02d" % v), p) for v, p in HS.list_held_states(root))
     if target_str in existing and not force:
         log(f"  {target_str} already exists -- nothing to do (idempotent)")
-        return dict(status="noop", vintage=target_str, amber=[])
+        return dict(status="noop", vintage=target_str, amber=[], notes=[])
     if target_str in existing:
         # --force REWRITES a vintage. Needed when a derivation is corrected mid-month, as on
         # 2026-08-19 when breakeven1y moved from a carry to a FRED read. The PRIOR vintage for
@@ -454,7 +472,7 @@ def reanchor(root: str = ".", asof: str | None = None, dry_run: bool = False,
     vs_curve, vs_1y, vs_diag = derive_vs(asof_d, prior, log=log)
     fey_in, d_in = carry_state(prior, replays, log=log)
     corp_prem = derive_corp_prem(root, asof_d, log=log)
-    breakeven1y, be_amber = derive_breakeven1y(root, prior, asof_d, log=log)
+    breakeven1y, be_amber, be_notes = derive_breakeven1y(root, prior, asof_d, log=log)
     cost = cost_for(asof_d)
     log(f"  cost: {cost:.4f} (raw {BED.cost_of_year(asof_d.year + (asof_d.timetuple().tm_yday-1)/365.0):.4f}, "
         f"floored at {COST_FLOOR})")
@@ -462,6 +480,9 @@ def reanchor(root: str = ".", asof: str | None = None, dry_run: bool = False,
     guard_view = dict(vs_1y=vs_1y, corp_prem=corp_prem, breakeven1y=breakeven1y,
                       cost=cost, fey_in=fey_in, D_in=d_in)
     amber = apply_guards(guard_view, prior, log=log) + be_amber
+    notes = be_notes
+    for m in notes:
+        log(f"  notice {m}")
 
     state = {
         "anchor_vintage": target_str,
@@ -506,6 +527,7 @@ def reanchor(root: str = ".", asof: str | None = None, dry_run: bool = False,
             "prior_values": {k: prior.get(k) for k in
                              ("fey_in", "D_in", "cost", "corp_prem", "breakeven1y")},
             "amber": amber,
+            "notes": notes,
         },
     }
 
@@ -529,7 +551,7 @@ def reanchor(root: str = ".", asof: str | None = None, dry_run: bool = False,
         log(f"  resolver confirms the daily job will read {os.path.basename(rp)} "
             f"with a {len(rs['vs'])}-element vs(T)")
 
-    return dict(status="written", vintage=target_str, amber=amber, state=state)
+    return dict(status="written", vintage=target_str, amber=amber, notes=notes, state=state)
 
 
 def main(argv=None) -> int:
@@ -547,15 +569,20 @@ def main(argv=None) -> int:
         print("The prior vintage stands and the daily job continues publishing off it.",
               file=sys.stderr)
         return 2
+    # STANDING PROPERTIES, printed on every path -- including the amber path, so an amber run
+    # never hides them. They do not affect the exit code; see the NOTICE tier at the top.
+    for m in res.get("notes", []):
+        print(f"\nNOTICE -- standing property, true every month by construction: {m}")
     if res["amber"]:
-        print("\nAMBER -- the state WAS written and WILL publish. Look at these moves:",
+        print("\nAMBER -- the state WAS written and WILL publish. Look at these EVENTS:",
               file=sys.stderr)
         for m in res["amber"]:
             print(f"  * {m}", file=sys.stderr)
         print("Failing the run so this is not silent. No action is required if the moves are "
               "real.", file=sys.stderr)
         return 1
-    print(f"\nGREEN -- {res['status']} {res['vintage']}")
+    print(f"\nGREEN -- {res['status']} {res['vintage']}"
+          + (" (with standing notices above)" if res.get("notes") else ""))
     return 0
 
 

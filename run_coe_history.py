@@ -15,6 +15,16 @@ THE REPLACEMENT is in the aeg-valuation repository:
 
 Refusing rather than being deleted, because a deleted script leaves 28 stale output files with
 no explanation and the next person rebuilds it.
+
+THE WORKFLOWS WERE DELETED 2026-08-24, and this module was not. Retiring the script by making it
+exit 1 also made `.github/workflows/coe_history.yml` fail on every push that touched it, which
+left a permanently red badge on the repository. A badge that is always red is not information; it
+teaches everyone to stop reading red badges, and this repository had a SECOND alarm
+(erp-monthly-reanchor) drifting toward the same state at the same time. So the two workflows --
+`coe_history.yml` and `coe_history_request.yml` -- are gone, while the loud refusal above stays
+exactly where someone who runs this by hand will meet it. Nothing consumed the outputs: they were
+moved to `outputs/superseded_2026-08-20/` on 2026-08-20 and no script, workflow or cockpit file
+reads them.
 """
 import sys
 
