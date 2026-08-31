@@ -1,11 +1,11 @@
 field,value
-erp_vintage,2026-08-28
-erp_vintage_date,2026-08-28
+erp_vintage,2026-08-31
+erp_vintage_date,2026-08-31
 eff_tips_ry_pct,2.5598
-eff_erp_pct,3.398
-eff_coe_pct,5.9578
+eff_erp_pct,3.3969
+eff_coe_pct,5.9567
 equity_duration_yrs,25.33
 forward_curve_file,TODAY_forward_curve_latest.csv
-vintage_age_days,3
+vintage_age_days,0
 vintage_stale,false
-overlay_applied_utc,2026-08-31T18:59:05Z
+overlay_applied_utc,2026-08-31T19:11:16Z
