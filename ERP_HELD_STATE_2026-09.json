@@ -1,0 +1,82 @@
+{
+  "anchor_vintage": "2026-09",
+  "note": "Held/slow ERP state, re-anchored on the 1st business day of each month (or when the real-yield master / SP500 normalized series publish a new vintage). Between anchors ONLY the daily real curve + norm_ey move.",
+  "vs": [
+    0.96684350132626,
+    0.9747416833539496,
+    0.9799451743124157,
+    0.9835890352829345,
+    0.9862543570701999,
+    0.9882691132602804,
+    0.9898321090400767,
+    0.9910705809050665,
+    0.992069504383397,
+    0.9928876039678245,
+    0.9928876039678245,
+    0.9928876039678245,
+    0.9928876039678245,
+    0.9928876039678245,
+    0.9928876039678245,
+    0.9928876039678245,
+    0.9928876039678245,
+    0.9928876039678245,
+    0.9928876039678245,
+    0.9928876039678245,
+    0.9928876039678245,
+    0.9928876039678245,
+    0.9928876039678245,
+    0.9928876039678245,
+    0.9928876039678245,
+    0.9928876039678245,
+    0.9928876039678245,
+    0.9928876039678245,
+    0.9928876039678245,
+    0.9928876039678245
+  ],
+  "fey_in": 5.952807,
+  "D_in": 25.220348,
+  "cost": 0.493154,
+  "corp_prem": 1.03,
+  "breakeven1y": 2.2005,
+  "normalized_X4": 234.1507,
+  "cpi_factor": 0.99844,
+  "sources": {
+    "reals_5_10_20_30": "Treasury Daily Par Real Yield Curve (5/7/10/20/30); 7y optional belly point",
+    "nominal_1y": "Treasury Daily Par Yield Curve, 1Y tenor",
+    "one_year_real_rule": "real_1y = nominal_1y - breakeven1y (breakeven held from the monthly master vintage)",
+    "norm_ey_rule": "norm_ey = 100 * normalized_X4 * cpi_factor / sp_close  (SP500 normalized earnings LEVEL / real price; price is daily)",
+    "sp_close": "S&P 500 index close (nominal)"
+  },
+  "derivation": {
+    "written_by": "reanchor.py",
+    "written_at": "2026-09-01T17:22:56+00:00",
+    "prior_vintage": "2026-08",
+    "month_ends_replayed": [
+      "2026-08-31"
+    ],
+    "vs": {
+      "vix1y": 21.87,
+      "tier_used": 1,
+      "source": "CBOE history CSV",
+      "alarm": false,
+      "median": 22.62,
+      "vs_1y": 0.966844
+    },
+    "corp_prem": "asfp.volsurface.floor_from_credit_grid(outputs/market_credit_latest.csv, wedge=0.50)",
+    "breakeven1y": "1-year MARKET breakeven (nominal Treasury minus TIPS real) from outputs/curve_latest.csv, republished every weekday by asfp.run. NOT Cleveland expected inflation -- James's ruling 2026-08-19: a real discount rate needs the breakeven an investor can transact at, which includes the inflation risk and TIPS liquidity premia. The 1-year point is front-constructed; flagged every month.",
+    "cost": "build_erp_daily.cost_of_year(), glide continues at its own rate, floored at 0.25 (reached mid-2032). James's ruling 2026-08-19.",
+    "fey_in_D_in": "prior state replayed through build_asof at the prior month's last business day",
+    "normalized_X4_cpi_factor": "CARRIED FORWARD from the prior vintage; normalization job not built. Worth <1bp -- see the inline note.",
+    "prior_values": {
+      "fey_in": 5.930512,
+      "D_in": 25.424575,
+      "cost": 0.494626,
+      "corp_prem": 1.04,
+      "breakeven1y": 2.0783
+    },
+    "amber": [],
+    "notes": [
+      "breakeven1y 2.2005 comes from a front-CONSTRUCTED curve point (reliability 0.0): no TIPS matures inside a year, so the 1-year real yield is extrapolated. Bounded -- ~4.6bp of eff_coe per 68bp."
+    ]
+  }
+}
