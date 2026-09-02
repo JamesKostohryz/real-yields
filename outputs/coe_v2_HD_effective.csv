@@ -1,8 +1,8 @@
 field,value_pct
-real_rf,2.6258
-market_erp,3.379
+real_rf,2.6323
+market_erp,3.359
 idiosyncratic,1.5555
-company_erp,4.9345
-real_coe,7.5603
+company_erp,4.9145
+real_coe,7.5468
 cf_growth,2.0
 methodology_note,"real_rf/market_erp: Decision-B state-machine (duration-weighted spot average, ERP_effective_latest.csv). idiosyncratic: cash-flow-PV YTM collapse of the same-day forward curve (different methodology, different curve representation). real_coe/company_erp add the two together -- see AEG-ERP-TASK5-LANDED-2026-08-12.md."
