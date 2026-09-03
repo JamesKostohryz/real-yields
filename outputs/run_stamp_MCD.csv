@@ -1,8 +1,10 @@
 field,value
 ticker,MCD
-generated_utc,2026-08-03 18:41 UTC
-generated_iso,2026-08-03T18:41:02Z
+generated_utc,2026-09-03 18:21 UTC
+generated_iso,2026-09-03T18:21:37Z
 bonds_source,none (pure-rating)
 n_bonds,0
-run_id,30842320583
-git_sha,e55f8ee
+run_id,33789975822
+git_sha,cac30a0
+obs_category,B
+ory_override,
