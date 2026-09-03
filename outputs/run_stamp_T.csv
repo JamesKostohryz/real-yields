@@ -1,8 +1,10 @@
 field,value
 ticker,T
-generated_utc,2026-07-20 19:33 UTC
-generated_iso,2026-07-20T19:33:28Z
+generated_utc,2026-09-03 18:24 UTC
+generated_iso,2026-09-03T18:24:17Z
 bonds_source,committed-file
 n_bonds,27
-run_id,local
-git_sha,
+run_id,33790225416
+git_sha,0de5188
+obs_category,B
+ory_override,
