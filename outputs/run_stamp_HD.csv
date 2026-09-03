@@ -1,8 +1,10 @@
 field,value
 ticker,HD
-generated_utc,2026-07-29 04:53 UTC
-generated_iso,2026-07-29T04:53:47Z
+generated_utc,2026-09-03 18:20 UTC
+generated_iso,2026-09-03T18:20:18Z
 bonds_source,committed-file
 n_bonds,12
-run_id,30423483164
-git_sha,5bc7574
+run_id,33789831787
+git_sha,edb1a92
+obs_category,B
+ory_override,
