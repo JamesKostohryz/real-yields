@@ -1,8 +1,10 @@
 field,value
 ticker,PEP
-generated_utc,2026-08-03 04:34 UTC
-generated_iso,2026-08-03T04:34:31Z
+generated_utc,2026-09-03 18:23 UTC
+generated_iso,2026-09-03T18:23:22Z
 bonds_source,committed-file
 n_bonds,7
-run_id,30784789733
-git_sha,892b99a
+run_id,33790117728
+git_sha,933001b
+obs_category,B
+ory_override,
