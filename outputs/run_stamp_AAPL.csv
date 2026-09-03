@@ -1,8 +1,10 @@
 field,value
 ticker,AAPL
-generated_utc,2026-07-15 18:26 UTC
-generated_iso,2026-07-15T18:26:24Z
-bonds_source,google-sheet
-n_bonds,52
-run_id,29440507541
-git_sha,ab52bb1
+generated_utc,2026-09-03 18:18 UTC
+generated_iso,2026-09-03T18:18:52Z
+bonds_source,committed-file
+n_bonds,15
+run_id,33789693014
+git_sha,bb64fb9
+obs_category,B
+ory_override,
