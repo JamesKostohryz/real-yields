@@ -1,8 +1,10 @@
 field,value
 ticker,AZO
-generated_utc,2026-08-01 21:58 UTC
-generated_iso,2026-08-01T21:58:23Z
+generated_utc,2026-09-03 18:19 UTC
+generated_iso,2026-09-03T18:19:31Z
 bonds_source,none (pure-rating)
 n_bonds,0
-run_id,30720245928
-git_sha,c998bed
+run_id,33789763323
+git_sha,7964abb
+obs_category,B
+ory_override,
