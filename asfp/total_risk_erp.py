@@ -1,37 +1,43 @@
 """
-Total-risk (constant-Sharpe) single-name ERP, with a VIX-term-structure market ERP.
+The MARKET equity risk premium from the VIX term structure. Percent (cc).
 
-Principle (James): a single, undiversified stock is never LESS risky than the
-diversified market, so its ERP is never below the market's. We enforce this by
-pricing every name at the market's Sharpe ratio applied to the name's OWN total
-risk:
+The MARKET ERP uses the observed variance term structure at the front (Martin: ERP ≈ implied
+variance) and glides over ~20 years to a floor = bond risk premium + equity convergence premium.
+Pure/injectable; live vol/curve reads happen in the job.
 
-    single_name_ERP(t) = market_ERP(t) × R_i(t),     R_i(t) ≥ 1
-    idiosyncratic_i(t)  = market_ERP(t) × (R_i(t) − 1)   ≥ 0   (additive-contract form)
+RETIRED 2026-09-02 -- THE SINGLE-NAME (total-risk / constant-Sharpe) CONSTRUCTION.
 
-R_i(t) = the name's total risk ÷ the market's total risk, across the horizon:
-  • front (0..obs_max): observed option-implied vol ratio  σ_i(t)/σ_mkt(t)  — using the
-    whole vol TERM STRUCTURE (VIX9D…VIX1Y, extended toward ~5y via long-dated SPX/
-    E-mini settlement IVs), not a single spot number.
-  • maturity: hold the front ratio (persistence), floored at 1.
-  • tail (past ORY): the Merton-elevator ramp lifts R toward a distressed level as the
-    firm heads to junk — obsolescence expressed as an exploding risk ratio, not an
-    arbitrary additive multiple.
+This module used to carry a second thing: a per-company idiosyncratic premium built as
 
-The MARKET ERP itself uses the observed variance term structure at the front (Martin:
-ERP ≈ implied variance) and glides over ~20 years to a floor = bond risk premium +
-equity convergence premium.
+    single_name_ERP(t) = market_ERP(t) × R_i(t),   R_i(t) ≥ 1
+    idiosyncratic_i(t) = market_ERP(t) × (R_i(t) − 1) ≥ 0
 
-All percent (cc). Pure/injectable; live vol/curve reads happen in the job.
+with R_i the name's own option-implied vol ratio, held flat past the observed horizon and lifted
+toward a distressed level by the Merton elevator past ORY. `build_risk_ratio()` and
+`single_name_erp()` implemented it and are gone.
+
+James ruled 2026-09-02 that there is ONE approved method for a company's idiosyncratic premium --
+the four-block risk score in `aeg-valuation/idio/` -- and that every other method is retired and
+must not be referred to anywhere. This was one of five constructions of that single quantity that
+were live simultaneously; it produced the `idiosyncratic` column of `coe_v2_<T>_latest_annual.csv`
+(3.566% at tenor 1 for AMCR) and the `coe_v2_<T>_effective*` files (5.868%), against the +0.5179pp
+the valuation actually used. **None of them ever reached a valuation.** `aeg-valuation`'s
+`rate_feed.load_coe()` reads only `real_rf` and `market_erp` from this file, and has since
+`b22d5f1`.
+
+Note the shape of the disagreement, because it is the reason the ruling exists: this construction
+floors the premium at zero and can only ADD to the market ERP, while the approved score is an
+increment CENTRED on zero -- 14 of the 16 onboarded names take a discount of about −1pp. The two
+cannot be reconciled by calibration; they are different objects.
+
+`assemble_coe_v2()` SURVIVES and is deliberately kept: the engine reads its `real_rf` and
+`market_erp` columns, and `coe_v2_<T>_latest_annual.csv` must go on being published.
+Working: `aeg-project/docs/engine/A6-Cost-Of-Equity-FINDINGS-2026-09-02.md`.
 """
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-
-from . import elevator as ev
-
-DEFAULT_R_DISTRESS = 6.0        # risk ratio of a near-death firm (~110% vol / ~18% mkt)
 
 
 def martin_pct(vol_points):
@@ -185,53 +191,22 @@ def build_market_erp_blended(grid, index_vol_ts, floor, converge_year=30.0):
     return pd.DataFrame({"tenor": grid, "market_erp": out}).set_index("tenor")
 
 
-# ------------------------------------------------------------ risk ratio R_i(t)
-def build_risk_ratio(grid, stock_vol_ts, index_vol_ts, issuer_rating, cg, category,
-                     ory_override=None, r_distress=DEFAULT_R_DISTRESS):
-    """R_i(t) ≥ 1: vol ratio at the front, held through maturity, lifted toward
-    `r_distress` past ORY by the elevator ramp."""
-    grid = np.asarray(grid, float)
-    sv, s_max = _interp_ts(grid, stock_vol_ts)
-    iv, i_max = _interp_ts(grid, index_vol_ts)
-    obs_max = min(s_max, i_max)
-    ratio = sv / np.maximum(iv, 1e-6)
-    # hold the last observed ratio flat through maturity
-    r_at_max = float(np.interp(obs_max, grid, ratio))
-    r_base = np.where(grid <= obs_max, ratio, r_at_max)
-    r_base = np.maximum(r_base, 1.0)                         # never below the market
-
-    # tail: elevator ramp lifts R from its maturity level toward the distressed level
-    preset = ev.CATEGORY_PRESETS[category]
-    ory = float(preset["ory"] if ory_override is None else ory_override)
-    W = ev.derive_width(issuer_rating, preset["floor"], preset["rate"])
-    p = ev.progress(grid, ory, W)
-    R = r_base + p * (r_distress - r_at_max)
-    R = np.maximum(R, 1.0)
-    return pd.DataFrame({"tenor": grid, "R": R, "r_base": r_base, "p_elevator": p}).set_index("tenor")
-
-
 # ------------------------------------------------------------ assembly
-def single_name_erp(grid, market_erp, R):
-    """single_name_ERP = market_ERP × R ; idiosyncratic = market_ERP × (R−1) ≥ 0."""
-    market_erp = np.asarray(market_erp, float)
-    R = np.asarray(R, float)
-    idio = market_erp * (R - 1.0)
+# `build_risk_ratio()` and `single_name_erp()` stood here until 2026-09-02. They were the retired
+# single-name construction; see the module docstring. Do not reinstate them, and do not add a
+# company-specific term to the table below: a company's idiosyncratic premium comes from ONE
+# place, `aeg-valuation/idio/company_curve_v2.py`, and it is added inside the engine.
+def assemble_coe_v2(grid, real_rf, market_erp, stock_vol_ts=None, index_vol_ts=None,
+                    issuer_rating=None, category=None, ory_override=None,
+                    r_distress=None):
+    """The two HOUSE-VIEW legs of the real cost of equity, by tenor. Columns:
+    real_rf, market_erp. Nothing company-specific.
+
+    The vol / rating / category / ORY arguments are RETAINED AND IGNORED so the two callers keep
+    working unchanged; they were the inputs to the retired risk-ratio construction. They are kept
+    rather than deleted because removing them turns a retirement into a call-site refactor across
+    `asfp/run_company.py` and `datasources.py` for no gain -- and because a reader who finds them
+    here should find the reason with them rather than wonder what was lost."""
     return pd.DataFrame({"tenor": np.asarray(grid, float),
-                         "market_erp": market_erp,
-                         "idiosyncratic": idio,
-                         "single_name_erp": market_erp * R}).set_index("tenor")
-
-
-def assemble_coe_v2(grid, real_rf, market_erp, stock_vol_ts, index_vol_ts,
-                    issuer_rating, category, ory_override=None,
-                    r_distress=DEFAULT_R_DISTRESS):
-    """Full single-name real COE table (v2): real_rf + market_ERP×R, with the
-    additive-contract idiosyncratic = market_ERP×(R−1) ≥ 0. Columns:
-    real_rf, market_erp, idiosyncratic, single_name_erp (=company_erp), real_coe."""
-    R = build_risk_ratio(grid, stock_vol_ts, index_vol_ts, issuer_rating, None,
-                         category, ory_override, r_distress)["R"].to_numpy()
-    out = single_name_erp(grid, market_erp, R)
-    out.insert(0, "real_rf", np.asarray(real_rf, float))
-    out = out.rename(columns={"single_name_erp": "company_erp"})
-    out["real_coe"] = out["real_rf"].to_numpy() + out["company_erp"].to_numpy()
-    return out
+                         "real_rf": np.asarray(real_rf, float),
+                         "market_erp": np.asarray(market_erp, float)}).set_index("tenor")

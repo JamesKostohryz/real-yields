@@ -4,9 +4,9 @@
   "forward_curve": "history/TODAY_forward_curve_latest.csv",
   "effective": "history/ERP_effective_latest.csv",
   "max_vintage_age_days": 5,
+  "_retired_2026_09_02": "The coe_v2_effective mapping was removed with the files it wrote. coe_v2_<T>_effective.csv added an ERP-engine real_rf/market_erp to a YTM-collapsed idiosyncratic term from a different curve representation and published the sum as a real cost of equity (11.873% for AMCR, against the 6.2169% the valuation used). Nothing read it. See apply_erp_overlay.py and asfp/total_risk_erp.py. There is ONE approved idiosyncratic method (James, 2026-09-02) and it lives in aeg-valuation/idio/, not here.",
   "mapping": {
     "curve_latest_annual":  { "real": "spot_real_yield", "real_fwd1y": "fwd_real_yield" },
-    "coe_v2_latest_annual": { "real_rf": "fwd_real_yield", "market_erp": "fwd_erp" },
-    "coe_v2_effective":     { "real_rf": "eff_tips_ry", "market_erp": "eff_erp" }
+    "coe_v2_latest_annual": { "real_rf": "fwd_real_yield", "market_erp": "fwd_erp" }
   }
 }

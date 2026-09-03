@@ -243,75 +243,23 @@ def main():
     except Exception as e:
         print(f"market ERP bootstrap skipped (non-fatal): {e}")
 
-    # --- non-fatal DIAGNOSTIC: index skew-priced ERP (corridor down/up variance).
-    # Pure measurement written to a new file; nothing in the model consumes it yet. ---
-    try:
-        from . import company as comp
-        d = comp.skew_diag("SPY")                       # index proxy
-        if d:
-            pd.DataFrame([{
-                "security": "SPY", "atm_vol": round(d["atm"] * 100, 2),
-                "k_down_var": round(d["k_down"] * 100, 3), "k_up_var": round(d["k_up"] * 100, 3),
-                "k_var_total": round(d["k_var"] * 100, 3),
-                "skew_erp": round(d["skew"] * 100, 3),
-                "variance_erp": round(d["atm"] ** 2 * 100, 3), "n_strikes": d["n"],
-            }]).to_csv(f"{OUTDIR}/market_skew_diag.csv", index=False)
-            print(f"skew diag SPY: skew_erp={d['skew']*100:.2f}% "
-                  f"variance_erp={d['atm']**2*100:.2f}% (down={d['k_down']*100:.2f} "
-                  f"up={d['k_up']*100:.2f}, n={d['n']})")
-    except Exception as e:
-        print(f"skew diagnostic skipped (non-fatal): {e}")
-
-    # --- non-fatal: SKEW-PRICED ERP term structure for the index (final engine).
-    # Corridor down/up-variance off the SPY smiles, per-year, phi=1 (full option-implied
-    # skew). New file; nothing consumes it yet — lets us see the real curve. ---
-    try:
-        from . import company as comp, erp_engine as ee, collapse as col
-        import yfinance as _yf
-        _tk = _yf.Ticker("SPY"); _fi = _tk.fast_info
-        _px = float(_fi.get("last_price") or _fi.get("lastPrice") or 0.0)
-        smiles = comp.fetch_smiles(_tk, _px) if _px > 0 else {}
-        if len(smiles) >= 2:
-            GS = np.arange(1, 31, dtype=float)
-            curve = ee.skew_erp_curve(smiles, GS, phi=1.0)
-            curve.round(4).to_csv(f"{OUTDIR}/market_skew_erp.csv")
-            # retired erp_engine.effective_erp() 2026-08-12 (wrong collapse: averaged
-            # rates, discounted by the ERP path alone). True YTM collapse instead --
-            # BUT this is a growth=2.0 SYNTHETIC-profile collapse, kept only so the
-            # skew-priced and variance-priced readings compare on equal footing. It is
-            # a diagnostic, not a disclosure figure: there is no company (and so no
-            # real cash-flow profile) behind an index-level number. Per Task 3 (AEG-
-            # ERP-Collapse-Function-AUDIT-2026-08-12.md section 5), the figure to
-            # DISCLOSE for a market-level effective ERP is the parameter-free
-            # bootstrap published above (erp_bootstrap_latest.csv), not this collapse.
-            eff = col.collapse_rate(GS, curve["erp"].to_numpy(), growth=2.0)
-            rs = comp.realized_skew("^GSPC")           # physical skew for the phi dial
-            phi_est = (rs["corridor"] / (curve["corridor_skew"].mean())
-                       if rs and curve["corridor_skew"].mean() > 1e-6 else None)
-            if rs:
-                pd.DataFrame([{"field": k, "value": v} for k, v in rs.items()]
-                             + [{"field": "phi_estimate", "value": round(phi_est, 3) if phi_est else None}]
-                             ).to_csv(f"{OUTDIR}/market_skew_realized.csv", index=False)
-            print(f"skew-ERP (index) DIAGNOSTIC (growth=2.0, not for disclosure): "
-                  f"tenors={sorted(smiles)} eff={eff:.2f}% "
-                  f"1y={curve['erp'].loc[1]:.2f} 5y={curve['erp'].loc[5]:.2f}"
-                  + (f"  phi_est={phi_est:.2f}" if phi_est else ""))
-    except Exception as e:
-        print(f"skew-ERP (index) skipped (non-fatal): {e}")
-
-    # --- non-fatal: measured average-stock variance (idiosyncratic term input) ---
-    # replaces the fixed-correlation assumption with a live large-cap basket average.
-    try:
-        from . import company as comp
-        avg_var, n = comp.basket_avg_variance()
-        pd.DataFrame([
-            {"field": "avg_stock_var", "value": round(avg_var, 6)},
-            {"field": "avg_stock_vol", "value": round(avg_var ** 0.5, 4)},
-            {"field": "n_names", "value": n},
-        ]).to_csv(f"{OUTDIR}/market_micro_latest.csv", index=False)
-        print(f"avg-stock variance written: {avg_var:.4f} (vol {avg_var**0.5:.1%}, n={n})")
-    except Exception as e:
-        print(f"avg-stock variance skipped (non-fatal): {e}")
+    # RETIRED 2026-09-02 -- three index-level blocks stood here, ~68 lines:
+    #   * the SPY skew diagnostic          -> outputs/market_skew_diag.csv
+    #   * the index skew-ERP term structure -> outputs/market_skew_erp.csv,
+    #                                          outputs/market_skew_realized.csv
+    #   * the measured average-stock variance -> outputs/market_micro_latest.csv
+    #
+    # The first two were the index half of the skew-corridor construction; the third supplied
+    # `avg_stock_var` to the Martin-Wagner anchor in asfp/coe.py. James ruled 2026-09-02 that
+    # there is ONE approved method for a company's idiosyncratic risk premium -- the four-block
+    # risk score in aeg-valuation/idio/ -- that every other method is retired, and that the
+    # retired ones "should not be referred to anywhere". None of these three files had a consumer
+    # outside the retired constructions, and none of them ever reached a valuation.
+    #
+    # The market-level ERP disclosure figure is UNAFFECTED and is written above: the
+    # parameter-free bootstrap in outputs/erp_bootstrap_latest.csv. That is the market-level
+    # effective ERP to quote, and it was already the one to quote before today -- the retired
+    # index collapse printed itself "DIAGNOSTIC, not for disclosure".
 
     print(f"OK  as_of={as_of}  cf_date={cf_date}  rows={len(curve)}")
 

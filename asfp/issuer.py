@@ -6,13 +6,29 @@ produce every per-company output the downstream valuation engine and the
 diagnostic chart consume:
 
   cod_<T>.csv         issuer REAL cost of debt, forward by tenor  (+ _annual)
-  coe_<T>.csv         COE components: real_rf, market_erp,
-                      credit_relative, idiosyncratic, ...          (+ _annual)
   company_<T>.csv     fundamentals + market_value_of_debt + portfolio analytics
   <T>_rating_fan.png  the rating-fan diagnostic chart
 
 Everything here is pure/injectable so the whole output-production path is tested
 offline; run_company.py adds only the live FRED/yfinance reads.
+
+RETIRED 2026-09-02 -- `coe_<T>.csv` / `coe_<T>_annual.csv` AND THE MODULE BEHIND THEM.
+
+James ruled that there is exactly ONE approved method for a company's idiosyncratic risk premium
+-- the four-block risk score in `aeg-valuation/idio/` -- that every other method is superseded, and
+that the retired ones "should not be referred to anywhere." `asfp/coe.py` was one of them: a
+Martin-Wagner total-variance anchor, `max(0.5*(equity_var - avg_stock_var), 0.0) * (t/30)^p`,
+floored at zero and hung off a single yfinance volatility scalar.
+
+Two things are worth knowing before anyone reconstructs it. It **never reached a valuation** --
+`aeg-valuation`'s `rate_feed.py` reads `coe_v2_<T>_latest_annual.csv`, not these files, and it now
+reads only the `real_rf` and `market_erp` columns of that. And the `max(..., 0.0)` made the premium
+STRUCTURALLY ZERO for any company below average-stock variance, which is why LIN, PEP and WMT
+published 0.000% at every tenor -- read for weeks as a data failure when it was the formula.
+
+The Merton pass-through `k` went with it: its only consumer was `assemble_coe`'s `credit_relative`
+term, which the v2 feed had already dropped ("leverage/credit stay inside the engine via MM
+re-lever"). Working: `aeg-project/docs/engine/A6-Cost-Of-Equity-FINDINGS-2026-09-02.md`.
 """
 from __future__ import annotations
 
@@ -20,11 +36,7 @@ import os
 import numpy as np
 import pandas as pd
 
-from . import credit, coe, units, company as comp, debt_analytics as da
-
-# market-average calibration for the Merton pass-through (mirrors COE template)
-MARKET = dict(base_k=2.0, L_mkt=0.33, sigma_V_mkt=0.22, T=10.0, r=0.0,
-              lgd=0.60, p=0.5)
+from . import credit, units, debt_analytics as da
 
 
 # ------------------------------------------------------------ rating & offset
@@ -77,42 +89,18 @@ def build_cost_of_debt(cg, bonds=None, rating=None):
     return cod, dict(rating=rating, offset=offset, n_used=n_used, n_excluded=n_excl)
 
 
-# ------------------------------------------------------------ cost of equity
-def build_coe(grid, real_rf, market_erp, market_ig_spread, issuer_spread,
-              rating, fund, vix, avg_stock_var=None, params=None):
-    """COE components DataFrame (real_rf, market_erp, credit_relative,
-    idiosyncratic, company_erp, real_coe) plus the k / idio_anchor used.
-
-    If `avg_stock_var` (the measured average-stock variance) is supplied, the
-    idiosyncratic term uses it directly; otherwise it falls back to the
-    VIX + fixed-correlation proxy."""
-    p = dict(MARKET); p.update(params or {})
-    k = comp.merton_k(p["base_k"], fund["L"], fund["sigma_V"],
-                      p["L_mkt"], p["sigma_V_mkt"], p["T"], p["r"])
-    if avg_stock_var is not None:
-        idio_anchor = coe.idio_anchor_from_variance(fund["equity_vol"], avg_stock_var)
-    else:
-        idio_anchor = coe.idio_anchor_from_options(fund["equity_vol"], vix,
-                                                   fund.get("avg_correlation", 0.35))
-    df = coe.assemble_coe(grid, real_rf, market_erp, market_ig_spread,
-                          issuer_spread, rating, k, idio_anchor,
-                          p=p["p"], lgd=p["lgd"])
-    return df, dict(k=k, idio_anchor=idio_anchor)
-
-
 # ------------------------------------------------------------ full assembly
+# `build_coe` and the MARKET calibration dict were removed here on 2026-09-02 -- see the module
+# docstring. `real_rf`, `market_erp`, `vix` and `avg_stock_var` remain in this signature and are
+# now unused: the callers still pass them, and changing four call sites for cosmetics would be a
+# wider edit than a retirement warrants. They are the seam through which the retired construction
+# entered; leave them empty rather than re-wiring anything into them.
 def assemble(ticker, cg, real_rf, market_erp, vix, fund, bonds=None,
              rating=None, params=None, avg_stock_var=None):
     """Compute every per-company table (no I/O). Returns a dict of DataFrames
     and a meta dict. `cg` is the market credit grid (index tenor)."""
     grid = cg.index.to_numpy()
     cod, cmeta = build_cost_of_debt(cg, bonds, rating)
-    issuer_spread = cod["spread"].to_numpy()
-    market_ig = cg["ig_index_spread"].to_numpy()
-
-    coe_df, emeta = build_coe(grid, real_rf, market_erp, market_ig,
-                              issuer_spread, cmeta["rating"], fund, vix,
-                              avg_stock_var=avg_stock_var, params=params)
 
     # market value of debt + portfolio analytics (if bonds present)
     if bonds is not None and len(bonds):
@@ -131,10 +119,6 @@ def assemble(ticker, cg, real_rf, market_erp, vix, fund, bonds=None,
         f"real_cod_{rating}": units.annualize_rate(
             cod[f"real_cod_{rating}"].to_numpy()),
     }).set_index("tenor")
-    ann = units.coe_annual_components(coe_df["real_rf"], coe_df["market_erp"],
-                                      coe_df["credit_relative"], coe_df["idiosyncratic"])
-    coe_annual = pd.DataFrame({"tenor": grid, **ann}).set_index("tenor")
-
     # market value of debt. Bonded: book debt marked to the mean traded price of the issuer's
     # own bond curve (mvd_basis=book-scaled). BONDLESS: no traded bonds to mark, so par-mark the
     # reported book total debt (mvd_basis=book-par) — bank/term/securitization debt sits near par,
@@ -146,14 +130,13 @@ def assemble(ticker, cg, real_rf, market_erp, vix, fund, bonds=None,
         if bd is not None and float(bd) > 0:
             mvd = float(bd)
             mvd_basis = "book-par"
-    meta = dict(ticker=ticker, **cmeta, **emeta,
+    meta = dict(ticker=ticker, **cmeta,
                 market_value_of_debt=mvd, mvd_basis=mvd_basis,
                 portfolio_ytm=summ.get("portfolio_ytm"),
                 wavg_mod_duration=summ.get("wavg_mod_duration"),
                 wavg_coupon=summ.get("wavg_coupon"),
                 wavg_years=summ.get("wavg_years"))
-    return dict(cod=cod, cod_annual=cod_annual, coe=coe_df, coe_annual=coe_annual,
-                summary=summ), meta
+    return dict(cod=cod, cod_annual=cod_annual, summary=summ), meta
 
 
 def write_outputs(outdir, ticker, tables, meta, fund):
@@ -164,12 +147,17 @@ def write_outputs(outdir, ticker, tables, meta, fund):
     # annual files: publish at 9 dp so the additive-identity rounding residual
     # (~1e-9) stays far inside the valuation engine's 1e-6 fail-loud tolerance.
     tables["cod_annual"].round(9).to_csv(f"{outdir}/cod_{t}_annual.csv")
-    tables["coe"].round(4).to_csv(f"{outdir}/coe_{t}.csv")
-    tables["coe_annual"].round(9).to_csv(f"{outdir}/coe_{t}_annual.csv")
 
     # company_<T>.csv: fundamentals + debt analytics, long field,value form
-    order = ["ticker", "price", "market_equity", "nfo", "L", "lambda0",
-             "equity_vol", "sigma_V", "avg_correlation"]
+    #
+    # `equity_vol`, `sigma_V` and `avg_correlation` were dropped from this list on 2026-09-02.
+    # They existed to feed the retired Martin-Wagner anchor and the retired Merton pass-through,
+    # and they appear NOWHERE in aeg-valuation -- `rate_feed.load_company()` reads
+    # `market_value_of_debt` and the four debt-analytics fields by NAME, so removing them cannot
+    # move a valuation. `equity_vol` was also the field register item B1 was assumed to poison;
+    # it never was (company.pick_equity_vol's lo=0.05 guard rejects the 3.13% quote outright), but
+    # publishing a volatility that nothing consumes invites the next reader to consume it.
+    order = ["ticker", "price", "market_equity", "nfo", "L", "lambda0"]
     rows = [{"field": k, "value": fund[k]} for k in order if k in fund]
     for k in ["market_value_of_debt", "portfolio_ytm", "wavg_mod_duration",
               "wavg_coupon", "wavg_years", "rating", "offset"]:
@@ -184,5 +172,4 @@ def write_outputs(outdir, ticker, tables, meta, fund):
     if meta.get("market_value_of_debt") is not None:
         rows.append({"field": "mvd_basis", "value": meta.get("mvd_basis") or "book-scaled"})
     pd.DataFrame(rows).to_csv(f"{outdir}/company_{t}.csv", index=False)
-    return [f"cod_{t}.csv", f"cod_{t}_annual.csv", f"coe_{t}.csv",
-            f"coe_{t}_annual.csv", f"company_{t}.csv"]
+    return [f"cod_{t}.csv", f"cod_{t}_annual.csv", f"company_{t}.csv"]

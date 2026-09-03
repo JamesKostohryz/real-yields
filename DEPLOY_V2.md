@@ -1,5 +1,26 @@
 # Deploying the v2 total-risk COE pipeline (live data)
 
+> **PARTLY SUPERSEDED, 2026-09-02. READ THIS FIRST.**
+>
+> **The SINGLE-NAME half of everything below is retired.** James ruled on 2026-09-02 that a
+> company's idiosyncratic risk premium has exactly ONE approved method — the four-block risk score
+> in `aeg-valuation/idio/` — that every other method is superseded, and that the retired ones
+> "should not be referred to anywhere". The total-risk / constant-Sharpe construction described
+> here was one of them.
+>
+> **What survives:** the MARKET ERP from the VIX term structure, the long-dated index extension,
+> and `coe_v2_<T>_latest_annual.csv` — now carrying `tenor`, `real_rf`, `market_erp` and nothing
+> else. Those two columns are what the valuation engine reads, and they are unaffected.
+>
+> **What is gone:** the `idiosyncratic` / `company_erp` / `real_coe` columns, the
+> `coe_v2_<T>_effective*` files, `asfp/coe.py`, `asfp/skew.py`, `asfp/erp_engine.py`,
+> `build_risk_ratio()`, `single_name_erp()`, and the skew diagnostics. None of them ever reached a
+> valuation. `coe_v2_<T>_effective.csv` published a real cost of equity of 11.873% for Amcor while
+> the valuation discounted at 6.2169%.
+>
+> Working: `aeg-project/docs/engine/A6-Cost-Of-Equity-FINDINGS-2026-09-02.md`. Read every
+> single-name claim below as history.
+
 This deploy makes the system **pull the real market data** for the total-risk single-name
 COE we designed: the VIX term structure, the long-dated (futures/LEAPS) index options, and
 each name's own option-implied vol term structure — and it emits both the **term structure**
@@ -49,14 +70,16 @@ Weekly job:
 
 Ticker job (`<T>` = ticker):
 
-- `coe_v2_<T>_latest.csv` / `_annual.csv` — the single-name real-COE **term structure**:
-  `real_rf, market_erp, idiosyncratic, company_erp, real_coe` (1–150y). The annual file is
-  exact-additive decimal.
-- `coe_v2_<T>_effective.csv` / `_annual.csv` — the **effective** (collapsed) numbers: the
-  whole curve summarized as one cash-flow-PV-weighted rate, the equity analogue of a bond's
-  YTM. Fields: `real_rf, market_erp, idiosyncratic, company_erp, real_coe` (+ `cf_growth`).
-  The effective pieces are collapsed as nested cumulative curves so they still **add up**
-  (`real_rf + market_erp + idiosyncratic = real_coe`).
+- `coe_v2_<T>_latest.csv` / `_annual.csv` — the two HOUSE-VIEW legs of the real cost of equity by
+  tenor: `tenor, real_rf, market_erp` (1–150y). **Three columns since 2026-09-02**; it carried
+  `idiosyncratic`, `company_erp` and `real_coe` as well until the single-name construction was
+  retired. `aeg-valuation`'s `rate_feed.load_coe()` reads the two legs and has never read the
+  other three.
+- ~~`coe_v2_<T>_effective.csv` / `_annual.csv`~~ — **RETIRED AND DELETED 2026-09-02.** They
+  collapsed the curve to a single YTM-style rate, and `apply_erp_overlay.py` then overwrote
+  `real_rf`/`market_erp` with the ERP engine's Decision-B reading while leaving `idiosyncratic` as
+  a YTM collapse of a different curve representation — and added them. The file's own
+  `methodology_note` said so. Nothing read it.
 
 ---
 

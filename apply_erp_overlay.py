@@ -33,8 +33,12 @@ WHAT IT TOUCHES (only files with a verified consumer)
       feeding ERP's spot reproduces ERP's forward EXACTLY. nominal columns are recomputed
       from the unchanged breakeven so the file stays self-consistent.
   coe_v2_<T>_latest_annual.csv   real_rf <- fwd_real_yield, market_erp <- fwd_erp
-  coe_v2_<T>_effective(.csv|_annual.csv)  real_rf <- eff_tips_ry, market_erp <- eff_erp
-  idiosyncratic is the firm's own Martin-Wagner term and is NEVER touched.
+      TWO COLUMNS, AND THE FILE NOW HAS NO OTHERS (2026-09-02). It used to carry
+      `idiosyncratic`, `company_erp` and `real_coe` as well; all three were the retired
+      single-name construction, none reached a valuation, and aeg-valuation reads only the
+      two above. See asfp/total_risk_erp.py's docstring and register item A6.
+  coe_v2_<T>_effective(.csv|_annual.csv)   RETIRED AND DELETED 2026-09-02. See the note where
+      overlay_effective() used to be, below.
 
 DELIBERATELY NOT TOUCHED: coe_v2_<T>_latest.csv (percent term structure, no verified
 consumer) and curve_latest.csv (raw construction artifact carrying phi/reliability/
@@ -42,10 +46,9 @@ provenance that must not be synthesised for an externally supplied curve).
 
 CONVENTIONS (verified against the published files — do not "simplify")
 ----------------------------------------------------------------------
-  *_annual / value_decimal : ADDITIVE      real_rf + market_erp + idiosyncratic == real_coe
-  percent value_pct        : SEQUENTIAL-LOG (marginal compounding), additive in CC space.
-  The percent file is authoritative for _effective and stays percent-pinned (ERP 1826);
-  the decimal variant is derived from it, so it may wobble in the 5th decimal. Intended.
+  *_annual : real_rf is a RATE, market_erp is a PREMIUM, and they convert differently.
+  See the units block above RATE_TARGETS — that distinction is load-bearing and was got
+  wrong once already (2026-08-22).
 
 FAILURE POLICY
 --------------
@@ -189,85 +192,45 @@ def overlay_curve(path, curve, mapping):
 
 
 def overlay_coe_termstructure(path, curve, mapping):
+    """Rewrite real_rf and market_erp from the ERP engine's forward curve.
+
+    TWO COLUMNS, AND SINCE 2026-09-02 THE FILE HAS NO OTHERS. It used to also carry
+    `idiosyncratic`, `company_erp` and `real_coe`, and this function recomputed the last two and
+    asserted `rf + erp + idio == real_coe`. That assertion is deleted because it has nothing left
+    to assert -- and because it was never the check it looked like. It is arithmetic: it holds by
+    construction the moment you write both sides, whatever the pieces mean. The pieces did not
+    mean the same thing (see the retirement note in asfp/total_risk_erp.py), and the assertion
+    passed all the way through.
+    """
     fn, rows = _rows(path)
     for row in rows:
         t = int(float(row["tenor"]))
         if t not in curve:
             continue
         for target, source in mapping.items():
-            row[target] = f"{_to_annual(target, curve[t][source]):.9f}"
-        rf, erp = float(row["real_rf"]), float(row["market_erp"])
-        idio = float(row["idiosyncratic"])          # NEVER overwritten
-        row["company_erp"] = f"{erp + idio:.9f}"
-        row["real_coe"] = f"{rf + erp + idio:.9f}"
-        if abs((rf + erp + idio) - float(row["real_coe"])) > TOL_DEC:
-            raise OverlayError(f"{path} tenor {t}: decomposition broke")
+            if target in row:
+                row[target] = f"{_to_annual(target, curve[t][source]):.9f}"
     _write(path, fn, rows)
-    return f"{os.path.basename(path)}: rf+market_erp <- forward curve, idio kept"
+    return f"{os.path.basename(path)}: real_rf + market_erp <- ERP forward curve"
 
 
-# Task 5 (AEG-ERP-Collapse-Function-AUDIT-2026-08-12.md section 5): real_rf/market_erp
-# below come from the Decision-B state-machine reading (duration-weighted average of
-# SPOT yields, held flat past year 30 -- ERP_effective_latest.csv). idiosyncratic comes
-# from a cash-flow-PV-weighted YTM collapse of the SAME-DAY forward curve (collapse_rate,
-# asfp/run_company.py) -- a different methodology, on a different curve representation
-# (spot vs forward), with its own cash-flow profile. Measured 2026-08-12: methodology
-# alone (holding the curve basis fixed) accounts for ~15-19bp of real_rf/real_coe;
-# state-basis timing (fey_in vs fey_out) for only ~1-3bp. Not a bug -- both bases are
-# decided (ERP 1826 / Decision B for the former, this collapse work for the latter) --
-# but real_coe/company_erp below ADD across methodologies without saying so unless this
-# note is attached. See AEG-ERP-TASK5-LANDED-2026-08-12.md for the full decomposition.
-METHODOLOGY_NOTE = (
-    "real_rf/market_erp: Decision-B state-machine (duration-weighted spot average, "
-    "ERP_effective_latest.csv). idiosyncratic: cash-flow-PV YTM collapse of the same-day "
-    "forward curve (different methodology, different curve representation). real_coe/"
-    "company_erp add the two together -- see AEG-ERP-TASK5-LANDED-2026-08-12.md.")
-
-
-def overlay_effective(ticker, eff, mapping):
-    """Percent file is authoritative (ERP 1826: keep percent-pinned); decimal derived."""
-    out = []
-    ppath = os.path.join("outputs", f"coe_v2_{ticker}_effective.csv")
-    apath = os.path.join("outputs", f"coe_v2_{ticker}_effective_annual.csv")
-    if not os.path.exists(ppath):
-        return out
-
-    fn, rows = _rows(ppath)
-    d = {r["field"]: r["value_pct"] for r in rows}
-    if "idiosyncratic" not in d:
-        raise OverlayError(f"{ppath}: no idiosyncratic field")
-    idio_pct = float(d["idiosyncratic"])            # NEVER overwritten
-    for target, source in mapping.items():
-        d[target] = f"{eff[source]}"
-    rf_pct, erp_pct = float(d["real_rf"]), float(d["market_erp"])
-    d["company_erp"] = f"{erp_pct + idio_pct:.4f}"
-    d["real_coe"] = f"{rf_pct + erp_pct + idio_pct:.4f}"
-    d["methodology_note"] = METHODOLOGY_NOTE
-    for r in rows:
-        r["value_pct"] = d[r["field"]]
-    if "methodology_note" not in [r["field"] for r in rows]:
-        rows.append({"field": "methodology_note", "value_pct": METHODOLOGY_NOTE})
-    _write(ppath, fn, rows)
-    if abs(rf_pct + erp_pct + idio_pct - float(d["real_coe"])) > TOL_PCT:
-        raise OverlayError(f"{ppath}: percent decomposition broke")
-    out.append(f"coe_v2_{ticker}_effective: {rf_pct}+{erp_pct}+{idio_pct} = {d['real_coe']} "
-               f"(mixed-methodology -- see methodology_note field)")
-
-    if os.path.exists(apath):
-        rf = math.exp(rf_pct / 100) - 1
-        erp = (1 + rf) * math.exp(erp_pct / 100) - 1 - rf
-        idio = (1 + rf + erp) * math.exp(idio_pct / 100) - 1 - rf - erp
-        vals = {"real_rf": rf, "market_erp": erp, "idiosyncratic": idio,
-                "company_erp": erp + idio, "real_coe": rf + erp + idio}
-        afn, arows = _rows(apath)
-        for r in arows:
-            if r["field"] in vals:
-                r["value_decimal"] = f"{vals[r['field']]:.6f}"
-        _write(apath, afn, arows)
-        if abs(vals["real_rf"] + vals["market_erp"] + vals["idiosyncratic"] - vals["real_coe"]) > TOL_DEC:
-            raise OverlayError(f"{apath}: decimal decomposition broke")
-        out.append(f"coe_v2_{ticker}_effective_annual: real_coe={vals['real_coe']:.6f}")
-    return out
+# RETIRED 2026-09-02 -- overlay_effective() and METHODOLOGY_NOTE.
+#
+# This function rewrote `coe_v2_<T>_effective.csv` and `_effective_annual.csv`, and it is the
+# single clearest artifact of what register item A6 was about. Its own METHODOLOGY_NOTE said, in
+# the file it published: real_rf and market_erp come from the "Decision-B state-machine
+# (duration-weighted spot average)"; `idiosyncratic` comes from a "cash-flow-PV YTM collapse of
+# the same-day forward curve (different methodology, different curve representation)"; and
+# real_coe/company_erp "add the two together". Then it asserted the sum, and the assertion passed,
+# because adding two incommensurable numbers is still addition.
+#
+# For AMCR the file published a real cost of equity of 11.873%. The valuation discounted at
+# 6.2169%. Nothing read the file -- not the engine, not the screener, not the Dashboard -- but it
+# sat in a public repository looking like the company's cost of equity.
+#
+# Both files are deleted and asfp/run_company.py no longer writes them. James ruled 2026-09-02
+# that there is ONE approved method for a company's idiosyncratic premium, the four-block risk
+# score in aeg-valuation/idio/, and that the retired ones must not be referred to anywhere.
 
 
 def write_provenance(eff, curve_path, age, stale):
@@ -312,11 +275,10 @@ def main():
         applied.append(overlay_curve(cpath, curve, maps.get("curve_latest_annual", {})))
     for p in sorted(glob.glob(os.path.join("outputs", "coe_v2_*_latest_annual.csv"))):
         applied.append(overlay_coe_termstructure(p, curve, maps.get("coe_v2_latest_annual", {})))
-    eff_map = maps.get("coe_v2_effective", {})
-    if eff_map:
-        for tk in sorted({os.path.basename(p).split("_")[2]
-                          for p in glob.glob(os.path.join("outputs", "coe_v2_*_effective.csv"))}):
-            applied += overlay_effective(tk, eff, eff_map)
+    # The `coe_v2_effective` pass ran here until 2026-09-02; see the note above overlay_curve's
+    # retired sibling. `eff` is still loaded and still validated -- it is what stamps the
+    # provenance file below, and aeg-valuation now REFUSES a valuation when that file is absent,
+    # stale, or older than the company job's own stamp (rate_feed.check_overlay_vintage, a2a4c52).
     applied.append(write_provenance(eff, curve_path, age, stale))
 
     print(f"[erp-overlay] Decision B re-applied — ERP vintage {eff['vintage']} "

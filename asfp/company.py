@@ -67,14 +67,12 @@ def pick_equity_vol(iv, rv, lo=0.05, hi=2.0, default=0.25):
     return float(default)
 
 
-def idiosyncratic_variance(equity_var, market_var, avg_correlation):
-    """Firm-specific variance the market can't diversify away.
-    Martin–Wagner: the stock's own risk-neutral variance minus the average
-    stock's; the average ≈ market_var / avg_correlation. IDIO add-on ~ ½ of it.
-    """
-    avg_stock_var = market_var / max(avg_correlation, 1e-3)
-    idio = 0.5 * (equity_var - avg_stock_var)
-    return max(idio, 0.0)
+# RETIRED 2026-09-02 -- idiosyncratic_variance(). The Martin-Wagner add-on,
+# `max(0.5 * (equity_var - market_var / avg_correlation), 0.0)`. Superseded by the four-block risk
+# score in aeg-valuation/idio/, the one approved method. Note what the `max(..., 0.0)` did: it
+# floored the premium at zero for any company below average-stock variance, so LIN, PEP and WMT
+# published exactly 0.000% at every tenor -- read as a data failure for weeks when it was the
+# formula. The approved score has no floor at zero; it is an increment that may be negative.
 
 
 # --------------------------------------------------------- yfinance pulls (runner)
@@ -125,102 +123,28 @@ def fetch_company(ticker, avg_correlation=0.35):
                 avg_correlation=avg_correlation)
 
 
-def fetch_smile(tk, price, target_days=365, band=(0.70, 1.30)):
-    """OTM implied-vol SMILE around the money for the expiry nearest `target_days`:
-    (strikes_ascending, ivs_decimal, forward≈price) or None. Puts below the forward,
-    calls above (the OTM side each), filtered to `band` moneyness and plausible IV.
-    Used by the skew diagnostic; best-effort, CI-runner only."""
-    import datetime as _dt
-    try:
-        exps = tk.options
-    except Exception:
-        return None
-    if not exps:
-        return None
-    exp = min(exps, key=lambda e: abs((_dt.date.fromisoformat(e) - _dt.date.today()).days - target_days))
-    try:
-        chain = tk.option_chain(exp)
-    except Exception:
-        return None
-    F = float(price)
-    lo, hi = band[0] * F, band[1] * F
-    pts = {}
-    for leg, side in ((chain.puts, "p"), (chain.calls, "c")):
-        try:
-            leg = leg.dropna(subset=["impliedVolatility"])
-        except Exception:
-            continue
-        for K, iv in zip(leg["strike"].astype(float), leg["impliedVolatility"].astype(float)):
-            if not (0.03 <= iv <= 2.0):
-                continue
-            if side == "p" and lo <= K < F:
-                pts[float(K)] = float(iv)              # OTM put
-            elif side == "c" and F <= K <= hi:
-                pts.setdefault(float(K), float(iv))    # OTM call
-    if len(pts) < 5:
-        return None
-    ks = sorted(pts)
-    return ks, [pts[k] for k in ks], F
-
-
-def fetch_smiles(tk, price, days_list=(182, 365, 730, 1095, 1825), band=(0.60, 1.50)):
-    """Multi-tenor option SMILES for the skew-ERP engine: {tenor_years: (strikes, ivs, F)}
-    at each horizon in `days_list` for which a plausible smile exists. Single names usually
-    reach ~1-2y; the index (SPX/SPY LEAPS + CME) reaches ~3-5y. Skips tenors with no chain."""
-    out = {}
-    for d in days_list:
-        sm = fetch_smile(tk, price, target_days=int(d), band=band)
-        if sm:
-            out[round(d / 365.0, 4)] = sm
-    return out
-
-
-def realized_skew(ticker, lookback_years=15):
-    """Physical (realized) skew for the φ dial: annualized down-semivariance minus
-    up-semivariance of monthly log returns, in percent — the realized analog of the
-    option-implied corridor. Returns dict(down, up, corridor, n) in percent variance, or
-    None. φ ≈ realized_corridor / implied_corridor, estimated per name on the runner."""
-    import yfinance as yf
-    try:
-        h = yf.Ticker(ticker).history(period=f"{int(lookback_years)}y", interval="1mo")
-        c = h["Close"].dropna()
-        if len(c) < 36:
-            return None
-        r = np.log(c / c.shift(1)).dropna().to_numpy()
-    except Exception:
-        return None
-    mu = float(np.mean(r))
-    dn = r[r < mu] - mu
-    up = r[r >= mu] - mu
-    # semivariances, annualized (×12 for monthly), in percent
-    down = float(np.sum(dn * dn) / len(r) * 12.0 * 100.0)
-    upv = float(np.sum(up * up) / len(r) * 12.0 * 100.0)
-    return {"down": round(down, 3), "up": round(upv, 3),
-            "corridor": round(down - upv, 3), "n": len(r)}
-
-
-def skew_diag(ticker, target_days=365):
-    """Skew diagnostic for one ticker: pull the smile, run the corridor down/up variance
-    split, return dict(ticker, atm, k_down, k_up, k_var, skew, n) in annual variance, or
-    None. Non-breaking — pure measurement, nothing in the model depends on it."""
-    import yfinance as yf
-    from . import skew as sk
-    tk = yf.Ticker(ticker)
-    try:
-        fast = tk.fast_info
-        price = float(fast.get("last_price") or fast.get("lastPrice") or 0.0)
-    except Exception:
-        price = 0.0
-    if price <= 0:
-        return None
-    sm = fetch_smile(tk, price, target_days)
-    if not sm:
-        return None
-    ks, ivs, F = sm
-    d = sk.skew_price(ks, ivs, F, target_days / 365.0)
-    d.update(ticker=ticker, atm=float(np.interp(F, ks, ivs)), n=len(ks))
-    return d
-
+# RETIRED 2026-09-02 -- fetch_smile(), fetch_smiles(), realized_skew() and skew_diag().
+#
+# Four functions, ~95 lines, all of them serving the skew-corridor construction: the option-smile
+# pulls, the physical semivariance corridor for the phi dial, and the diagnostic that wrote
+# skew_diag_<T>.csv. James ruled 2026-09-02 that there is ONE approved method for a company's
+# idiosyncratic risk premium -- the four-block risk score in aeg-valuation/idio/ -- and that the
+# superseded ones "should not be referred to anywhere". asfp/skew.py and asfp/erp_engine.py went
+# with them.
+#
+# TWO THINGS THAT SHOULD OUTLIVE THE CODE.
+#
+# The corridor was attributed to James inside asfp/skew.py's own docstring ("Principle (James):
+# you only demand compensation for the ASYMMETRY"). He had never seen it. A section of the agreed
+# workflow design was written on that attribution and ruled that the published premium should move
+# to it. One misattributed docstring, load-bearing for weeks.
+#
+# skew_diag()'s `atm` -- np.interp(F, ks, ivs) off a thin smile -- is where register item B1's
+# 3.13% at-the-money implied volatility came from, identical to two decimals across HD, LIN, PEP
+# and WMT. It never reached a valuation, and it never even reached `equity_vol`: pick_equity_vol()
+# above rejects anything below lo=0.05 and falls back to realized vol. B1 is closed by this
+# deletion. The standing protection is the refusal register in WORKFLOW-DESIGN-2026-09-01.md 1.3,
+# which fires on an ATM implied volatility identical across unrelated tickers to two decimals.
 
 # tenors (calendar days) at which we sample the single-name IV term structure
 EQUITY_TS_DAYS = (30, 90, 182, 365, 545, 730)
@@ -309,29 +233,7 @@ DEFAULT_BASKET = [
 ]
 
 
-def basket_avg_variance(tickers=None, min_names=12, default_vol=0.30):
-    """Average risk-neutral variance of a large-cap basket — the 'average stock'
-    variance for the idiosyncratic term. Per name: ~1y ATM implied vol (realized-vol
-    fallback), robust to individual failures. Returns (avg_variance, n_used).
-    Falls back to default_vol**2 if too few names succeed."""
-    import time
-    import yfinance as yf
-    tickers = tickers or DEFAULT_BASKET
-    variances = []
-    for t in tickers:
-        try:
-            tk = yf.Ticker(t)
-            fast = tk.fast_info
-            price = float(fast.get("last_price") or fast.get("lastPrice") or 0.0)
-            if price <= 0:
-                continue
-            iv = _atm_iv(tk, price, target_days=365)
-            v = iv if (iv is not None and 0.05 <= iv <= 2.0) else _realized_vol(tk)
-            if v is not None and 0.05 <= v <= 2.0:
-                variances.append(v ** 2)
-        except Exception:
-            pass
-        time.sleep(0.3)                       # gentle on Yahoo's rate limits
-    if len(variances) >= min_names:
-        return float(np.mean(variances)), len(variances)
-    return float(default_vol ** 2), len(variances)
+# RETIRED 2026-09-02 -- basket_avg_variance(). It measured the "average stock" variance for the
+# Martin-Wagner idiosyncratic term and wrote outputs/market_micro_latest.csv. That term is retired,
+# the file is no longer written, and nothing else read either. DEFAULT_BASKET and _atm_iv above
+# remain: _atm_iv still serves fetch_equity_vol_ts, which feeds the market-ERP path.

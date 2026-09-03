@@ -41,16 +41,10 @@ def _load_market():
     a_mkt = float(erp["a_mkt"].iloc[0]) if "a_mkt" in erp else (18.0 ** 2) / 100.0
     vix = float(np.sqrt(a_mkt * 100.0))
 
-    # measured average-stock variance (idiosyncratic term); None -> fixed-corr fallback
-    avg_stock_var = None
-    mp = f"{OUTDIR}/market_micro_latest.csv"
-    if os.path.exists(mp):
-        try:
-            m = pd.read_csv(mp).set_index("field")["value"]
-            avg_stock_var = float(m.loc["avg_stock_var"])
-        except Exception:
-            avg_stock_var = None
-    return cg, real_rf, market_erp, vix, avg_stock_var
+    # `avg_stock_var` was read from outputs/market_micro_latest.csv here until 2026-09-02. Its
+    # ONLY consumer was the retired Martin-Wagner anchor (asfp/coe.py), which is gone; the file
+    # is no longer written. See asfp/issuer.py's docstring.
+    return cg, real_rf, market_erp, vix
 
 
 def _load_committed_bonds(ticker):
@@ -96,13 +90,12 @@ def main():
         print(f"  ** WARNING: bonds' Issuer column does not look like {ticker} — "
               f"check the sheet holds {ticker}'s bonds, not another company's.")
 
-    cg, real_rf, market_erp, vix, avg_stock_var = _load_market()
+    cg, real_rf, market_erp, vix = _load_market()
 
     from . import company as comp                       # yfinance import deferred
     fund = comp.fetch_company(ticker)
 
-    tables, meta = issuer.assemble(ticker, cg, real_rf, market_erp, vix, fund, bonds,
-                                   avg_stock_var=avg_stock_var)
+    tables, meta = issuer.assemble(ticker, cg, real_rf, market_erp, vix, fund, bonds)
     written = issuer.write_outputs(OUTDIR, ticker, tables, meta, fund)
 
     # freshness stamp: lets the Google Sheet show WHEN these numbers were generated
@@ -136,7 +129,7 @@ def main():
     # market ERP. New files coe_v2_<T>_latest(.csv/_annual.csv); existing outputs
     # untouched until the engine cuts over. Needs the weekly market_erp_v2 file. ---
     try:
-        from . import total_risk_erp as trv, units
+        from . import total_risk_erp as trv
         me2p = f"{OUTDIR}/market_erp_v2_latest.csv"
         if not os.path.exists(me2p):
             print("  coe v2 skipped: market_erp_v2_latest.csv missing (run weekly job first)")
@@ -166,143 +159,78 @@ def main():
             coe2 = trv.assemble_coe_v2(GV, rf2, mkt2, stock_vol_ts, index_vol_ts,
                                        meta["rating"], category, ory_override=ory_ov)
             coe2.round(4).to_csv(f"{OUTDIR}/coe_v2_{ticker}_latest.csv")
-            # exact additive annual-decimal variant (marginal compounding)
-            rfp, mep, idp = (coe2[c].to_numpy() for c in ("real_rf", "market_erp", "idiosyncratic"))
-            l0 = np.expm1(rfp / 100); l1 = np.expm1((rfp + mep) / 100); l2 = np.expm1((rfp + mep + idp) / 100)
-            pd.DataFrame({"tenor": GV, "real_rf": l0, "market_erp": l1 - l0,
-                          "idiosyncratic": l2 - l1, "company_erp": l2 - l0, "real_coe": l2}
+            # THREE COLUMNS, NOT SIX, SINCE 2026-09-02.
+            #
+            # This file used to carry `idiosyncratic`, `company_erp` and `real_coe` as well. All
+            # three were the retired single-name construction (see asfp/total_risk_erp.py's
+            # docstring), and `aeg-valuation` never read any of them -- `rate_feed.load_coe()`
+            # takes `real_rf` and `market_erp` and nothing else. Publishing the other three put a
+            # `real_coe` on a public surface that disagreed with the rate the valuation actually
+            # discounted at (6.87% against 6.2169% for AMCR), which is most of register item A6.
+            #
+            # THE ORDER MATTERED AND IT HAS BEEN OBSERVED: `rate_feed.load_coe()` stopped
+            # REQUIRING those columns in aeg-valuation b22d5f1, which landed BEFORE this. Dropping
+            # them first would have made the engine refuse every ticker.
+            #
+            # The file itself must survive. It is the engine's market-ERP feed and the target
+            # apply_erp_overlay.py rewrites.
+            rfp, mep = (coe2[c].to_numpy() for c in ("real_rf", "market_erp"))
+            l0 = np.expm1(rfp / 100); l1 = np.expm1((rfp + mep) / 100)
+            pd.DataFrame({"tenor": GV, "real_rf": l0, "market_erp": l1 - l0}
                          ).set_index("tenor").round(9).to_csv(f"{OUTDIR}/coe_v2_{ticker}_latest_annual.csv")
             written += [f"coe_v2_{ticker}_latest.csv", f"coe_v2_{ticker}_latest_annual.csv"]
 
-            # --- EFFECTIVE (collapsed) ERP: the whole term structure summarized as one
-            # cash-flow-PV-weighted rate, the equity analogue of a bond's YTM. Collapse
-            # nested cumulative curves so the effective pieces still add up.
+            # RETIRED 2026-09-02 -- coe_v2_<T>_effective.csv and _effective_annual.csv.
             #
-            # WEIGHTS (Task 2, AEG-ERP-Collapse-Function-AUDIT-2026-08-12.md section 5):
-            # prefer the company's OWN real forecast distribution stream (dps_real, from
-            # aeg-valuation's published <TICKER>_aeg_schedule.csv) over the synthetic
-            # (1+growth/100)^t profile. This job runs BEFORE any forecast necessarily
-            # exists for a name (a brand-new ticker has no schedule yet), and some
-            # implied-distribution paths are not usable as collapse weights (see
-            # aeg_schedule_feed.py docstring) — both are expected, not exceptional, so
-            # the synthetic growth path stays as a documented, WARNED fallback rather
-            # than being retired.
-            from . import collapse as col, aeg_schedule_feed as asf
-            growth = float(os.environ.get("COE_CF_GROWTH", "2.0"))    # fallback CF growth only
-            coe_curve = coe2["real_coe"].to_numpy()
-            rf_curve = coe2["real_rf"].to_numpy()
-            rfmkt_curve = rf_curve + coe2["market_erp"].to_numpy()
-            try:
-                sched_grid, sched_cf = asf.fetch_distribution_profile(ticker)
-                n = len(sched_grid)
-                grid_used = np.asarray(sched_grid, dtype=float)
-                eff_coe = col.collapse_rate(grid_used, coe_curve[:n], cashflows=sched_cf)
-                eff_rf = col.collapse_rate(grid_used, rf_curve[:n], cashflows=sched_cf)
-                eff_rfmkt = col.collapse_rate(grid_used, rfmkt_curve[:n], cashflows=sched_cf)
-                profile_basis = f"{ticker}_aeg_schedule dps_real, {n}y"
-                print(f"  coe v2 EFFECTIVE profile: real distribution stream "
-                      f"({ticker}_aeg_schedule.csv, {n} years)")
-            except asf.ScheduleFetchError as e:
-                grid_used = GV
-                eff_coe = col.collapse_rate(grid_used, coe_curve, growth=growth)
-                eff_rf = col.collapse_rate(grid_used, rf_curve, growth=growth)
-                eff_rfmkt = col.collapse_rate(grid_used, rfmkt_curve, growth=growth)
-                profile_basis = f"synthetic growth={growth}%/yr fallback"
-                print(f"  coe v2 EFFECTIVE profile: WARNING no usable real distribution "
-                      f"stream for {ticker} ({e}); falling back to synthetic "
-                      f"growth={growth}%/yr weights")
-            eff_mkt = eff_rfmkt - eff_rf
-            # eff_company (= eff_coe - eff_rf) and eff_idio below are DIFFERENCES of two
-            # independently-collapsed repricing rates, like a bond spread quoted as one
-            # yield minus another — not themselves a repricing rate. See Task 2 spec.
-            eff_company = eff_coe - eff_rf
-            eff_idio = eff_company - eff_mkt
-            eff_rows = [
-                ("real_rf", round(eff_rf, 4)),
-                ("market_erp", round(eff_mkt, 4)),
-                ("idiosyncratic", round(eff_idio, 4)),
-                ("company_erp", round(eff_company, 4)),
-                ("real_coe", round(eff_coe, 4)),
-                ("cf_growth", round(growth, 3)),
-                ("profile_basis", profile_basis),
-            ]
-            pd.DataFrame(eff_rows, columns=["field", "value_pct"]).to_csv(
-                f"{OUTDIR}/coe_v2_{ticker}_effective.csv", index=False)
-            # annual-decimal companion (rates via exp(cc/100)-1; premia as marginal steps)
-            e0 = np.expm1(eff_rf / 100); e1 = np.expm1((eff_rf + eff_mkt) / 100)
-            e2 = np.expm1((eff_rf + eff_mkt + eff_idio) / 100)
-            pd.DataFrame([
-                ("real_rf", round(e0, 6)), ("market_erp", round(e1 - e0, 6)),
-                ("idiosyncratic", round(e2 - e1, 6)), ("company_erp", round(e2 - e0, 6)),
-                ("real_coe", round(e2, 6)),
-            ], columns=["field", "value_decimal"]).to_csv(
-                f"{OUTDIR}/coe_v2_{ticker}_effective_annual.csv", index=False)
-            written += [f"coe_v2_{ticker}_effective.csv", f"coe_v2_{ticker}_effective_annual.csv"]
-
+            # A ~75-line block stood here that collapsed the whole term structure to a single
+            # cash-flow-PV-weighted rate, the equity analogue of a bond's YTM, and published five
+            # fields including `idiosyncratic`, `company_erp` and `real_coe`. It is deleted, and
+            # the two files it wrote are deleted with it.
+            #
+            # WHY, PRECISELY. The collapse arithmetic was sound. What was not sound is what
+            # apply_erp_overlay.py then did to the output: it overwrote `real_rf` and `market_erp`
+            # with the ERP engine's Decision-B state-machine reading while leaving `idiosyncratic`
+            # as this block's YTM collapse of a different curve representation, and ADDED THE TWO
+            # TOGETHER. Its own `methodology_note` field said so in as many words. The addition
+            # passes its assertion because the assertion is arithmetic; the objects are not
+            # commensurable. For AMCR this file published a `real_coe` of 11.873% while the
+            # valuation discounted at 6.2169% -- an eleven-fold spread in the idiosyncratic leg,
+            # register item A6.
+            #
+            # Nothing read it. Not the engine, not the screener, not the Dashboard. It existed to
+            # be looked at, and what it showed was wrong. The retirement of the single-name
+            # construction removes the leg it was collapsing anyway.
             r1 = stock_vol_ts[0][1] / max(index_vol_ts[0][1], 1e-6)
             print(f"  coe v2: R(front)={r1:.2f} cat={category} "
                   f"stock_vol_pts={len(stock_vol_ts)} obs_to={stock_vol_ts[-1][0]:.2f}y "
-                  f"coe(1y)={coe2['real_coe'].loc[1]:.2f}% coe(100y)={coe2['real_coe'].loc[100]:.2f}%")
-            print(f"  coe v2 EFFECTIVE: real_coe={eff_coe:.2f}%  company_erp={eff_company:.2f}%  "
-                  f"(mkt={eff_mkt:.2f} + idio={eff_idio:.2f}) over rf={eff_rf:.2f}%")
-            # Task 3 disclosure line: effective rate + its profile, always together
-            # (e.g. "effective ERP 3.35%, PEP base-case distribution stream, 30y").
-            print(f"  coe v2 EFFECTIVE ERP {eff_company:.2f}%, {ticker}, {profile_basis}")
+                  f"(house-view legs only: real_rf + market_erp; the company premium is the "
+                  f"four-block score inside aeg-valuation)")
+            print(f"  coe v2: market_erp(1y)={coe2['market_erp'].loc[1]:.2f}% "
+                  f"market_erp(30y)={coe2['market_erp'].loc[30]:.2f}%")
     except Exception as e:
         print(f"  coe v2 skipped (non-fatal): {e}")
 
-    # --- non-fatal DIAGNOSTIC: skew-priced ERP for this name vs the index, next to the
-    # current variance-based number. Pure measurement; nothing consumes it. Lets us see
-    # real skew results before deciding whether to adopt the approach. ---
-    try:
-        from . import company as comp
-        dn = comp.skew_diag(ticker)
-        if dn:
-            var_erp = dn["atm"] ** 2 * 100                       # Martin(ATM), name's own
-            mkt_skew = None
-            msp = f"{OUTDIR}/market_skew_diag.csv"
-            if os.path.exists(msp):
-                mkt_skew = float(pd.read_csv(msp)["skew_erp"].iloc[0])
-            row = {"ticker": ticker, "atm_vol": round(dn["atm"] * 100, 2),
-                   "k_down_var": round(dn["k_down"] * 100, 3), "k_up_var": round(dn["k_up"] * 100, 3),
-                   "skew_erp": round(dn["skew"] * 100, 3),
-                   "variance_erp_ownvol": round(var_erp, 3),
-                   "market_skew_erp": mkt_skew, "n_strikes": dn["n"]}
-            pd.DataFrame([row]).to_csv(f"{OUTDIR}/skew_diag_{ticker}.csv", index=False)
-            written.append(f"skew_diag_{ticker}.csv")
-            mk = f" mkt_skew={mkt_skew:.2f}%" if mkt_skew is not None else ""
-            print(f"  SKEW DIAG {ticker}: skew_erp={dn['skew']*100:.2f}%  "
-                  f"variance_erp(ownvol)={var_erp:.2f}%  "
-                  f"(down={dn['k_down']*100:.2f} up={dn['k_up']*100:.2f}, n={dn['n']}){mk}")
-    except Exception as e:
-        print(f"  skew diagnostic skipped (non-fatal): {e}")
-
-    # --- non-fatal: SKEW-PRICED ERP term structure for this name (final engine).
-    # Corridor off the name's own multi-tenor smiles; single names compress vs the index. ---
-    try:
-        from . import company as comp, erp_engine as ee, collapse as col
-        import yfinance as _yf
-        _tk = _yf.Ticker(ticker); _fi = _tk.fast_info
-        _px = float(_fi.get("last_price") or _fi.get("lastPrice") or 0.0)
-        smiles = comp.fetch_smiles(_tk, _px) if _px > 0 else {}
-        if len(smiles) >= 2:
-            GS = np.arange(1, 31, dtype=float)
-            curve = ee.skew_erp_curve(smiles, GS, phi=1.0)
-            curve.round(4).to_csv(f"{OUTDIR}/skew_erp_{ticker}.csv")
-            written.append(f"skew_erp_{ticker}.csv")
-            # retired erp_engine.effective_erp() 2026-08-12 (wrong collapse: averaged
-            # rates, discounted by the ERP path alone). True YTM collapse instead:
-            eff = col.collapse_rate(GS, curve["erp"].to_numpy(), growth=2.0)
-            rs = comp.realized_skew(ticker)
-            if rs:
-                pd.DataFrame([{"field": k, "value": v} for k, v in rs.items()]
-                             ).to_csv(f"{OUTDIR}/skew_erp_{ticker}_realized.csv", index=False)
-                written.append(f"skew_erp_{ticker}_realized.csv")
-            print(f"  skew-ERP {ticker}: tenors={sorted(smiles)} eff={eff:.2f}% "
-                  f"1y={curve['erp'].loc[1]:.2f} 5y={curve['erp'].loc[5]:.2f}"
-                  + (f"  realized_corridor={rs['corridor']:.2f}" if rs else ""))
-    except Exception as e:
-        print(f"  skew-ERP {ticker} skipped (non-fatal): {e}")
+    # RETIRED 2026-09-02 -- the two SKEW blocks that stood here.
+    #
+    # The first wrote `skew_diag_<T>.csv` (a corridor down/up variance split against the name's
+    # own Martin ATM variance); the second wrote `skew_erp_<T>.csv`, `skew_erp_<T>_realized.csv`
+    # and called `erp_engine.skew_erp_curve`, labelled "final engine". Both are gone, with
+    # `asfp/skew.py`, `asfp/erp_engine.py`, and `company.skew_diag` / `realized_skew` /
+    # `fetch_smile` / `fetch_smiles`.
+    #
+    # THE SECOND BLOCK IS THE ONE THAT COST THE MOST. `asfp/skew.py`'s docstring opens "Principle
+    # (James): you only demand compensation for the ASYMMETRY" -- it attributes the method to
+    # James by name. On 2026-09-02, shown it: "I don't even know what the 'skew corridor' is." A
+    # whole section of the agreed workflow design (WORKFLOW-DESIGN-2026-09-01.md 1.2) was written
+    # on that attribution and ruled that the published premium should MOVE to this corridor. It
+    # has been struck. Measured before it was: the switch would have raised the cost of equity in
+    # 416 of 450 name-tenor rows, median +0.96pp, almost all of it the removal of the discount the
+    # approved score gives a large-cap defensive -- because the corridor is an absolute premium
+    # floored at zero and cannot produce a discount at all.
+    #
+    # `skew_diag_<T>.csv` is also where register item B1's 3.13% sentinel lived. It reached this
+    # diagnostic and the retired Martin-Wagner curve, and nothing else; B1 is closed by this
+    # deletion.
 
     # archive the exact bonds this run used (audit trail; no manual tab-keeping)
     if bonds is not None:
@@ -316,8 +244,9 @@ def main():
               f"flagged={res['n_flagged']}")
 
     print(f"OK {ticker}: wrote {', '.join(written)}")
-    print(f"  rating={meta['rating']} offset=x{meta['offset']:.3f} "
-          f"k={meta['k']:.2f} idio_anchor={meta['idio_anchor']:.2f}%")
+    # `k` and `idio_anchor` were printed here until 2026-09-02. Both belonged to the retired
+    # Martin-Wagner / Merton-pass-through construction in asfp/coe.py and no longer exist.
+    print(f"  rating={meta['rating']} offset=x{meta['offset']:.3f}")
     if meta.get("market_value_of_debt"):
         _pytm = meta.get("portfolio_ytm"); _mdur = meta.get("wavg_mod_duration")
         _ytm_s = f"{_pytm*100:.2f}%" if _pytm is not None else "n/a"

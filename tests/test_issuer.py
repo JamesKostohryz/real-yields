@@ -45,67 +45,71 @@ def test_cost_of_debt_fallback_vs_bonds():
     assert np.allclose(cod0["real_cod"], cg["real_fwd"] + cg["spread_A"])
 
 
-def test_assemble_produces_all_components():
+def test_assemble_produces_the_cost_of_debt_and_nothing_idiosyncratic():
+    """RETIRED 2026-09-02. This test used to assert that `assemble` returns a `coe` table with
+    real_rf / market_erp / credit_relative / idiosyncratic / company_erp / real_coe, and that the
+    four legs sum to real_coe. All of that came from asfp/coe.py's Martin-Wagner anchor and the
+    Merton credit pass-through, which are retired: James ruled 2026-09-02 that a company's
+    idiosyncratic risk premium has exactly ONE approved method, the four-block risk score in
+    aeg-valuation/idio/, and that the rest must not be referred to anywhere.
+
+    Note the identity the old test checked. `real_coe == real_rf + market_erp + credit_relative +
+    idiosyncratic` is true by construction the moment you write both sides -- assemble_coe()
+    computed the sum and then the test asserted it. It could not have failed, and it could not
+    have detected that the idiosyncratic leg was structurally zero for every defensive name,
+    which it was."""
     cg = _cg()
     real_rf = cg["real_fwd"].to_numpy()
     market_erp = 3.2 * 0.5 ** ((GRID - 1) / 8.0) + 1.0
     tables, meta = issuer.assemble("X", cg, real_rf, market_erp, vix=18.0,
                                    fund=_fund(), bonds=None, rating="BBB")
-    coe = tables["coe"]
-    for col in ["real_rf", "market_erp", "credit_relative", "idiosyncratic",
-                "company_erp", "real_coe"]:
-        assert col in coe.columns
-    # real_coe == real_rf + the three premia (additive, cc space)
-    recomposed = (coe["real_rf"] + coe["market_erp"] + coe["credit_relative"]
-                  + coe["idiosyncratic"])
-    assert np.max(np.abs(recomposed - coe["real_coe"])) < 1e-9
-    # annual decomposition sums to annual real_coe
-    ca = tables["coe_annual"]
-    s = ca["real_rf"] + ca["market_erp"] + ca["credit_relative"] + ca["idiosyncratic"]
-    assert np.max(np.abs(s - ca["real_coe"])) < 1e-12
-    assert meta["k"] > 0 and meta["rating"] == "BBB"
+    assert set(tables) == {"cod", "cod_annual", "summary"}
+    for retired in ("coe", "coe_annual"):
+        assert retired not in tables, (
+            "%s was retired on 2026-09-02 with asfp/coe.py" % retired)
+    for retired in ("k", "idio_anchor"):
+        assert retired not in meta, (
+            "meta[%r] belonged to the retired construction" % retired)
+    assert meta["rating"] == "BBB"
 
 
 def test_annual_files_match_engine_contract():
     """The valuation engine binds to exact columns in the *_annual files and
-    fail-hard on drift. Lock the coe/cod annual headers so we can't break them."""
+    fail-hard on drift. Lock the cod annual header so we can't break it.
+
+    The coe_<T>_annual.csv half of this lock is gone with the file (2026-09-02). The engine's
+    cost-of-equity contract is now `coe_v2_<T>_latest_annual.csv` carrying tenor / real_rf /
+    market_erp, and it is locked in tests/test_total_risk_erp.py instead."""
     cg = _cg()
     real_rf = cg["real_fwd"].to_numpy()
     market_erp = 3.2 * 0.5 ** ((GRID - 1) / 8.0) + 1.0
     tables, meta = issuer.assemble("T", cg, real_rf, market_erp, vix=18.0,
-                                   fund=_fund(), bonds=None, rating="BBB",
-                                   avg_stock_var=0.30 ** 2)
-    coe_cols = ["tenor"] + list(tables["coe_annual"].reset_index().columns[1:])
-    assert coe_cols == ["tenor", "real_rf", "market_erp", "credit_relative",
-                        "idiosyncratic", "company_erp", "real_coe"]
+                                   fund=_fund(), bonds=None, rating="BBB")
     cod_cols = list(tables["cod_annual"].reset_index().columns)
     assert cod_cols == ["tenor", "real_cod", "spread", "rating", "offset",
                         "real_cod_BBB"]
-    # additive identity must survive PUBLISHED precision (what the engine reads).
-    # 9 dp keeps the rounding residual ~1e-9, far inside the engine's 1e-6 fail.
-    ca = tables["coe_annual"].round(9)
-    s = (ca["real_rf"] + ca["market_erp"] + ca["credit_relative"]
-         + ca["idiosyncratic"])
-    assert float(np.max(np.abs(s - ca["real_coe"]))) < 1e-7
 
 
-def test_variance_based_idio_gives_smile():
-    from asfp import coe
-    # a name MORE volatile than the average stock earns a positive anchor...
-    assert coe.idio_anchor_from_variance(0.40, 0.30 ** 2) > 0
-    # ...and a defensive name below the average earns zero.
-    assert coe.idio_anchor_from_variance(0.20, 0.30 ** 2) == 0.0
-
+def test_company_csv_no_longer_publishes_the_retired_volatility_fields():
+    """`equity_vol`, `sigma_V` and `avg_correlation` were dropped from company_<T>.csv on
+    2026-09-02. They fed the retired anchor and the retired Merton pass-through, and they appear
+    NOWHERE in aeg-valuation -- rate_feed.load_company() reads market_value_of_debt and the debt
+    analytics BY NAME, so this cannot move a valuation. `equity_vol` is also the field register
+    item B1 was assumed to poison, and never did."""
+    import os, tempfile, csv
     cg = _cg()
     real_rf = cg["real_fwd"].to_numpy()
-    market_erp = 3.2 * 0.5 ** ((GRID - 1) / 8.0) + 1.0        # decaying market ERP
-    fund = _fund(); fund["equity_vol"] = 0.40                 # well above the average
+    market_erp = 3.2 * 0.5 ** ((GRID - 1) / 8.0) + 1.0
+    fund = _fund()
     tables, meta = issuer.assemble("X", cg, real_rf, market_erp, vix=18.0,
-                                   fund=fund, bonds=None, rating="BBB",
-                                   avg_stock_var=0.30 ** 2)
-    assert meta["idio_anchor"] > 0
-    ce = tables["coe"]["company_erp"].to_numpy()
-    assert ce[29] > ce[19]        # long-end smile: 30y ERP above 20y, from rising idio
-    # and the idiosyncratic column itself rises with tenor
-    idio = tables["coe"]["idiosyncratic"].to_numpy()
-    assert idio[29] > idio[0]
+                                   fund=fund, bonds=None, rating="BBB")
+    d = tempfile.mkdtemp()
+    issuer.write_outputs(d, "X", tables, meta, fund)
+    with open(os.path.join(d, "company_X.csv")) as fh:
+        fields = [r["field"] for r in csv.DictReader(fh)]
+    for retired in ("equity_vol", "sigma_V", "avg_correlation"):
+        assert retired not in fields, "%s is retired and must not be published" % retired
+    assert "market_value_of_debt" in fields or "ticker" in fields
+    written = issuer.write_outputs(d, "X", tables, meta, fund)
+    assert not any("coe_" in n for n in written), (
+        "coe_<T>.csv / coe_<T>_annual.csv are retired and must not be written")

@@ -13,6 +13,11 @@ valuation the engine produced. Caught by James noticing the screen quote a 30-ye
 
 A RATE compounds; a PREMIUM does not. real-yields' own units.py draws that line; this pins both
 sides of it. Runs under pytest and standalone.
+
+2026-09-02: `overlay_effective` is RETIRED (there is one approved idiosyncratic method and it is
+not in this repository), so the sentence above about it having "the conversion right all along" is
+history. The retirement guards that replaced tests/test_apply_erp_overlay_effective.py are at the
+bottom of this file.
 """
 import csv
 import math
@@ -79,6 +84,54 @@ def test_fisher_identity_holds():
            if abs(float(C[t]["nominal"])
                   - ((1 + float(C[t]["real"])) * (1 + float(C[t]["breakeven"])) - 1)) > 1e-9]
     assert not bad, f"nominal != (1+real)(1+breakeven)-1 at tenors {bad[:5]}"
+
+
+# ---------------------------------------------------------------- A6b retirement guards
+# These replaced tests/test_apply_erp_overlay_effective.py, which tested `overlay_effective` and
+# its `methodology_note`. That note was the clearest statement anywhere of what register item A6
+# was about: it recorded, in the published file, that real_rf/market_erp and `idiosyncratic` came
+# from different methodologies on different curve representations -- and then the function ADDED
+# them and asserted the sum. For AMCR the result was a published real cost of equity of 11.873%
+# against the 6.2169% the valuation used.
+
+
+def test_overlay_effective_is_retired():
+    """James, 2026-09-02: one approved idiosyncratic method, the rest "should not be referred to
+    anywhere". A named guard so this cannot be reintroduced quietly."""
+    for gone in ("overlay_effective", "METHODOLOGY_NOTE"):
+        assert not hasattr(O, gone), (
+            "%s was retired on 2026-09-02 with coe_v2_<T>_effective*.csv" % gone)
+
+
+def test_the_config_no_longer_maps_the_effective_files():
+    import json
+    cfg = json.load(open(os.path.join(ROOT, "history", "ERP_OVERLAY.json")))
+    assert "coe_v2_effective" not in cfg.get("mapping", {})
+    assert set(cfg["mapping"]) == {"curve_latest_annual", "coe_v2_latest_annual"}
+
+
+def test_the_coe_v2_annual_files_carry_only_the_two_house_view_legs():
+    """The engine reads real_rf and market_erp. `idiosyncratic`, `company_erp` and `real_coe` were
+    dropped on 2026-09-02 -- AFTER aeg-valuation b22d5f1 stopped requiring them, which is the order
+    that mattered: dropping them first would have made the engine refuse every ticker."""
+    import glob
+    found = sorted(glob.glob(os.path.join(ROOT, "outputs", "coe_v2_*_latest_annual.csv")))
+    if not found:
+        return
+    for path in found:
+        cols = next(iter(csv.reader(open(path))))
+        assert cols[:3] == ["tenor", "real_rf", "market_erp"], (path, cols)
+        for retired in ("idiosyncratic", "company_erp", "real_coe"):
+            assert retired not in cols, "%s still published in %s" % (retired, path)
+
+
+def test_no_retired_artifact_is_still_published():
+    import glob
+    for pat in ("coe_v2_*_effective*.csv", "skew_erp_*.csv", "skew_diag_*.csv",
+                "market_skew_*.csv", "market_micro_latest.csv"):
+        hits = glob.glob(os.path.join(ROOT, "outputs", pat))
+        assert not hits, "retired artifact still in outputs/: %s" % [os.path.basename(h)
+                                                                    for h in hits]
 
 
 if __name__ == "__main__":
