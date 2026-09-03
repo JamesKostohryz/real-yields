@@ -1,8 +1,10 @@
 field,value
 ticker,KO
-generated_utc,2026-08-03 17:55 UTC
-generated_iso,2026-08-03T17:55:01Z
+generated_utc,2026-09-03 18:20 UTC
+generated_iso,2026-09-03T18:20:58Z
 bonds_source,committed-file
 n_bonds,49
-run_id,30838838979
-git_sha,9b8c1e6
+run_id,33789904924
+git_sha,373754b
+obs_category,B
+ory_override,
