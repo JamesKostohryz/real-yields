@@ -233,6 +233,49 @@ def overlay_coe_termstructure(path, curve, mapping):
 # score in aeg-valuation/idio/, and that the retired ones must not be referred to anywhere.
 
 
+MARKET_COE = os.path.join("outputs", "coe_v2_MARKET_latest_annual.csv")
+
+
+def write_market_coe(curve):
+    """Publish the two HOUSE-VIEW legs of the real cost of equity ONCE, for every company.
+
+    WHY THIS FILE EXISTS, AND WHY IT DID NOT NEED TO BEFORE 2026-09-02.
+
+    `coe_v2_<T>_latest_annual.csv` used to carry a genuinely company-specific column -- the
+    retired single-name idiosyncratic construction -- so a per-ticker file was unavoidable and
+    each one needed its own options pull from the company job. That is why `aeg-valuation` could
+    price eighteen tickers against 388 rows on the screen: onboarding did not gate on financial
+    history (the canonical store holds 761 names), it gated on THIS FILE existing.
+
+    With the idiosyncratic leg retired, nothing in that file is company-specific any more.
+    Measured on the published bytes, 2026-09-02: tenors 1-30 of all eighteen per-ticker files are
+    BYTE-IDENTICAL, and tenors 1-30 are the only part the engine reads. The company's own premium
+    now comes from `aeg-valuation/idio/company_curve_v2.py`'s four-block score -- the one approved
+    method (James, 2026-09-02) -- which covers 499 names and is added inside the engine.
+
+    So this is the honest shape: one market file, published by the job that owns the market curve.
+    `aeg-valuation`'s `rate_feed.load_coe()` falls back to it when a per-ticker file is absent,
+    which makes onboarding a name a matter of having the company's statements rather than
+    dispatching a rate job for it.
+
+    It is written HERE rather than in the company job on purpose. The overlay runs every weekday
+    and is the thing that establishes the Decision-B basis; the company job runs only when
+    somebody dispatches it for a ticker. A market curve whose freshness depended on a per-company
+    dispatch is the defect this file exists to remove, not one to reproduce.
+    """
+    os.makedirs("outputs", exist_ok=True)
+    with open(MARKET_COE, "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["tenor", "real_rf", "market_erp"])
+        for t in range(1, 31):
+            c = curve[t]
+            w.writerow([f"{float(t):.1f}",
+                        f"{_to_annual('real_rf', c['fwd_real_yield']):.9f}",
+                        f"{_to_annual('market_erp', c['fwd_erp']):.9f}"])
+    return (f"{os.path.basename(MARKET_COE)}: real_rf + market_erp for every company, "
+            f"tenors 1-30 (the company premium is added inside the engine)")
+
+
 def write_provenance(eff, curve_path, age, stale):
     """Stamp the CONSUMED vintage so COCKPIT/James can SEE which curve is live."""
     os.makedirs("outputs", exist_ok=True)
@@ -274,7 +317,10 @@ def main():
     if os.path.exists(cpath):
         applied.append(overlay_curve(cpath, curve, maps.get("curve_latest_annual", {})))
     for p in sorted(glob.glob(os.path.join("outputs", "coe_v2_*_latest_annual.csv"))):
+        if os.path.basename(p) == os.path.basename(MARKET_COE):
+            continue          # written from the curve below, not overlaid onto itself
         applied.append(overlay_coe_termstructure(p, curve, maps.get("coe_v2_latest_annual", {})))
+    applied.append(write_market_coe(curve))
     # The `coe_v2_effective` pass ran here until 2026-09-02; see the note above overlay_curve's
     # retired sibling. `eff` is still loaded and still validated -- it is what stamps the
     # provenance file below, and aeg-valuation now REFUSES a valuation when that file is absent,
