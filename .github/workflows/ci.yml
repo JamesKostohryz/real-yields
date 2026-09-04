@@ -1,0 +1,78 @@
+name: ci-on-push
+
+# ADDED 2026-09-04, item 1 of docs/engine/PASTE-THIS-next-SETUP-app-session.md's open list and the
+# gap that let the 2026-09-03 PCHIP-interpolation change leave build_erp_daily.py's own run_gate()
+# broken at HEAD for a full day, undetected: this repository's ONLY test-bearing trigger before
+# today was erp-daily-close's own `gate` job, which runs on a SCHEDULE (weekday 12:30 UTC) or on
+# manual dispatch -- never on an ordinary push. A code change landing between two scheduled runs,
+# or one landing alongside a data-only bot commit (company-data, weekly, erp-monthly-reanchor all
+# push to main on their own clocks), got no test coverage at all until the next 12:30 UTC window.
+# This workflow closes that gap: every push to main now runs the full hermetic test surface
+# immediately, win or lose, with no secrets and no network calls required (verified below).
+#
+# WHY THIS IS SAFE TO RUN ON EVERY PUSH, INCLUDING BOT COMMITS. Every file under tests/ was read
+# before this workflow was written (not assumed) and checked for FRED_API_KEY, EODHD_API_KEY, and
+# raw network calls (requests.get / urlopen / urllib.request) -- none of the 25 test_*.py files use
+# any of them. The one flagged file, tests/test_vol_scale_v3.py, carries its own skip marker and
+# will report SKIPPED rather than FAILED if its precondition isn't met; that is pytest doing what
+# it is supposed to do, not a gap in this workflow. So this job needs no secrets, touches no
+# external service, and cannot itself go red for a reason that has nothing to do with the code.
+#
+# WHAT IT DOES NOT DO. It does not gate or block anything -- erp-daily-close's own gate->publish
+# dependency is untouched and remains the thing standing between a broken build and a bad publish.
+# This workflow is pure, additional, immediate visibility: a red check on the commit itself,
+# instead of silence until the next scheduled run finds out. It also does not write anything --
+# read-only checkout, no commit step, no `contents: write` permission.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Keyed on ref (not a fixed name) so this never collides with erp-daily-close's own
+# "erp-daily-close" group or company.yml/company_request.yml's "company-data-request" group --
+# this is a new, independent lane. cancel-in-progress: true is deliberate and different from
+# those two: this job commits nothing, so only "is the LATEST push on main green" is ever
+# informative, and letting a superseded run keep burning minutes after three more pushes have
+# landed serves no one.
+concurrency:
+  group: ci-on-push-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+
+      # The same three steps erp-daily-close's own `gate` job already runs on schedule/dispatch --
+      # proven to work in this repository's actual CI environment, not newly invented here. Kept
+      # as their own named steps (rather than folded into the pytest sweep below) so a failure
+      # here reads exactly the way it already does on the familiar scheduled run.
+      - name: Smoke - v4 library loads (fail-closed on import/precompute)
+        run: python -c "import build_erp_daily as b; print('build_erp_daily import OK; params locked, TMAX=%d' % b.TMAX)"
+
+      - name: Acceptance gate - hermetic self-test (reproduces committed June <1bp, no external files)
+        run: python build_erp_daily.py
+
+      - name: Writer <-> overlay contract
+        run: python tests/test_erp_daily_writer.py
+
+      - name: Three-preset publish contract (preset B unchanged; A/C validate and order with the plateau)
+        run: python tests/test_erp_daily_presets.py
+
+      # EVERYTHING ELSE under tests/, in one sweep -- the actual gap this workflow exists to close.
+      # The four steps above already ran three of these files directly; pytest re-running them here
+      # is harmless duplication, not a risk. -ra surfaces the one expected skip (test_vol_scale_v3.py)
+      # by reason instead of letting it pass silently.
+      - name: Full hermetic test sweep (tests/)
+        run: python -m pytest tests/ -q -ra
