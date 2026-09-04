@@ -120,7 +120,7 @@ def test_legacy_scalar_path_is_bit_identical():
     import build_erp_daily as b
     assert b.VS_JUNE == 0.9348
     r = b.build_asof(b.JUNE_TIPS, b.JUNE_NORM_EY, b.VS_JUNE, **b.JUNE_STATE)
-    assert abs(r["eff_erp"] - 3.400) < 0.01 and abs(r["eff_coe"] - 5.748) < 0.01
+    assert abs(r["eff_erp"] - 3.396) < 0.01 and abs(r["eff_coe"] - 5.765) < 0.01  # re-baselined 2026-09-04 to match build_erp_daily.JUNE_EFF (PCHIP landing); see LANDED-ERP-Three-Preset-Publish-2026-09-04.md
 
 
 # ============================================================================================
@@ -278,9 +278,13 @@ def test_6_presets_themselves_are_untouched():
 def test_7_landed_reference_reproduces():
     import build_erp_daily as b
     r = b.build_asof(b.JUNE_TIPS, b.JUNE_NORM_EY, b.VS_AUG, **b.JUNE_STATE)
-    assert abs(r["eff_tips"] - 2.349) < 0.01
-    assert abs(r["eff_erp"] - 3.472) < 0.01
-    assert abs(r["eff_coe"] - 5.821) < 0.01
+    # Re-baselined 2026-09-04 to match build_erp_daily.AUG_EFF (PCHIP landing); this file's copy
+    # of the acceptance reference had gone stale relative to run_gate()'s own copy, caught by
+    # ci-on-push running this file's pure-math tests for the first time. See
+    # LANDED-ERP-Three-Preset-Publish-2026-09-04.md.
+    assert abs(r["eff_tips"] - 2.370) < 0.01
+    assert abs(r["eff_erp"] - 3.468) < 0.01
+    assert abs(r["eff_coe"] - 5.837) < 0.01
     assert max(abs(r["spot_coe"][i] - b.SPOT_COE_REF_AUG[i]) for i in range(30)) < 0.01
 
 
