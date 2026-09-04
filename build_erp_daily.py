@@ -20,7 +20,8 @@ DESIGN (locked with James, 2026-07-22):
   * Forward transform: zero->1y-forward bootstrap  f_t=(1+z_t)^t/(1+z_{t-1})^{t-1}-1  (engine convention).
 
 ACCEPTANCE GATE: hermetic self-test below, no external files and no network. Current dated
-reference 2026-08-18 (2.349/3.472/5.821, preset B, vs(T) from VIX1Y=22.94); the superseded June
+reference 2026-08-18 (2.370/3.468/5.837, preset B, vs(T) from VIX1Y=22.94; re-baselined
+2026-09-04 for the 2026-09-03 PCHIP interpolation change -- see the dated note below); the superseded June
 scalar reference (2.349/3.400/5.748) is retained as an executable BACK-COMPATIBILITY assertion,
 so a change to the engine is distinguishable from a change to the input.
 """
@@ -180,8 +181,18 @@ JUNE_STATE=dict(fey_in=6.02, D_in=24.72, cost=0.503)          # May->June incomi
 # bit-identical, so that nothing which used the old path can have silently changed underneath the
 # vs(T) landing. If this ever fails, the engine moved, not the input.
 VS_JUNE=0.9348                    # vol_scale at 2026-06 from vol_scale_from_shiller (SUPERSEDED)
-JUNE_EFF=dict(eff_tips=2.349, eff_erp=3.400, eff_coe=5.748)   # committed effective, PRESET B
-SPOT_COE_REF=[5.0490,5.4178,5.7276,5.9352,6.1229,6.1375,6.1380,6.1209,6.0964,6.0667,6.0419,6.0145,5.9859,5.9571,5.9291,5.9021,5.8780,5.8575,5.8411,5.8292,5.7816,5.7385,5.6996,5.6647,5.6336,5.6063,5.5823,5.5614,5.5436,5.5284]
+# RE-BASELINED 2026-09-04 for the 2026-09-03 PCHIP interpolation change (see build_asof's own
+# docstring). That change moved tips_eff for JUNE_TIPS by +0.0212pp because JUNE_TIPS has no
+# seven-year knot, so linear-vs-PCHIP disagree here even though the two are close once real
+# curves carry all five published knots. run_erp_daily.py's own __main__ smoke was re-baselined
+# the same day and documents the identical shift (2.3485->2.3697, 3.3999->3.3955,
+# 5.7484->5.7653); THIS reference -- the sibling embedded in this file's own run_gate() -- was
+# missed. It has been failing at HEAD since 06864f7 landed; the erp-daily-close workflow simply
+# had not run again yet to show it (last green run 2026-09-03T16:33Z, on the pre-PCHIP code).
+# Two copies of the same fact disagreeing by date is the exact failure 00-START-HERE.md warns
+# about; this is that failure, caught here before the next scheduled run turned it red.
+JUNE_EFF=dict(eff_tips=2.370, eff_erp=3.396, eff_coe=5.765)   # committed effective, PRESET B
+SPOT_COE_REF=[5.0434,5.4680,5.8084,6.0038,6.1180,6.1576,6.1632,6.1382,6.1008,6.0614,6.0465,6.0360,6.0276,6.0191,6.0079,5.9905,5.9657,5.9310,5.8842,5.8230,5.7769,5.7352,5.6976,5.6637,5.6331,5.6059,5.5814,5.5595,5.5398,5.5221]
 
 # ---------------------------------------------------------------- CURRENT reference, 2026-08-18
 # THE LANDING. This is the first change in the vol_scale sequence that MOVES A PUBLISHED NUMBER.
@@ -215,8 +226,8 @@ VS_AUG=[1.0141467728,1.0108379625,1.0086373506,1.0070864667,1.0059468983,1.00508
         1.0030917752,1.0030917752,1.0030917752,1.0030917752,1.0030917752,1.0030917752,
         1.0030917752,1.0030917752,1.0030917752,1.0030917752,1.0030917752,1.0030917752,
         1.0030917752,1.0030917752,1.0030917752,1.0030917752,1.0030917752,1.0030917752]
-AUG_EFF=dict(eff_tips=2.349, eff_erp=3.472, eff_coe=5.821)    # PRESET B
-SPOT_COE_REF_AUG=[5.2855,5.6299,5.9240,6.1106,6.2807,6.2817,6.2707,6.2434,6.2097,6.1715,6.1411,6.1083,6.0743,6.0400,6.0064,5.9734,5.9431,5.9162,5.8932,5.8746,5.8235,5.7766,5.7337,5.6944,5.6588,5.6266,5.5977,5.5718,5.5488,5.5284]
+AUG_EFF=dict(eff_tips=2.370, eff_erp=3.468, eff_coe=5.837)    # PRESET B, re-baselined 2026-09-04 -- see the dated note above JUNE_EFF
+SPOT_COE_REF_AUG=[5.2798,5.6799,6.0042,6.1785,6.2757,6.3015,6.2954,6.2603,6.2139,6.1662,6.1456,6.1293,6.1151,6.1008,6.0837,6.0602,6.0293,5.9886,5.9357,5.8684,5.8188,5.7734,5.7317,5.6934,5.6583,5.6262,5.5968,5.5698,5.5450,5.5221]
 
 def run_gate():
     # --- CURRENT: the landed vs(T) reference

@@ -58,6 +58,8 @@ jobs:
         run: python build_erp_daily.py
       - name: Writer <-> overlay contract (runner writes _latest; apply_erp_overlay readers validate identities)
         run: python tests/test_erp_daily_writer.py
+      - name: Three-preset publish contract (preset B unchanged; A/C validate and order with the plateau)
+        run: python tests/test_erp_daily_presets.py
       - name: Held-state pointer (newest vintage resolves, is fresh, and name matches contents)
         run: python -m pytest tests/test_held_state.py -q
       - name: Live preview (READ-ONLY; no commit)
@@ -106,7 +108,7 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies
         run: pip install -r requirements.txt pytest
-      - name: Rebuild + write the two _latest files (fail-closed on fetch)
+      - name: Rebuild + write the three-preset _latest files (fail-closed on fetch)
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: |
@@ -122,8 +124,15 @@ jobs:
           _, state = rr.resolve_held_state(".")
           asof = datetime.date.today().isoformat()
           reals, nom, sp = rr.fetch_daily_inputs(asof)
-          r = rr.run(asof, reals, nominal_1y=nom, sp_close=sp, state=state, outdir="history")
+          # THREE CALLS TO build_asof ON IDENTICAL INPUTS, added 2026-09-04 -- no second
+          # implementation. Preset B writes to the same stable names as before (verified
+          # byte-identical to plain run() in tests/test_erp_daily_presets.py); A and C are
+          # new, additive files that only the SETUP bench reads.
+          results = rr.run_all_presets(asof, reals, nominal_1y=nom, sp_close=sp, state=state, outdir="history")
+          r = results["B"]
           print("PUBLISH %s: eff tips=%.4f erp=%.4f coe=%.4f dur=%.2f" % (asof, r["eff_tips"], r["eff_erp"], r["eff_coe"], r["D_out"]))
+          for preset, rp in results.items():
+              print("  preset %s (plateau %.2fpp): eff_erp=%.4f eff_coe=%.4f" % (preset, __import__("build_erp_daily").PLATEAU_PRESETS[preset], rp["eff_erp"], rp["eff_coe"]))
           # fail-closed: validate the just-written files with the overlay's OWN readers before committing
           spec = importlib.util.spec_from_file_location("ovl", "apply_erp_overlay.py")
           ovl = importlib.util.module_from_spec(spec)
@@ -195,11 +204,13 @@ jobs:
           print("re-anchor is current.")
           PY
 
-      - name: Commit + push the two _latest files
+      - name: Commit + push the three-preset _latest files
         run: |
           git config user.name "asfp-bot"
           git config user.email "asfp-bot@users.noreply.github.com"
-          git add history/TODAY_forward_curve_latest.csv history/ERP_effective_latest.csv
-          git commit -m "erp-daily: publish ERP today curve $(date -u +%F)" || { echo "no changes to commit"; exit 0; }
+          git add history/TODAY_forward_curve_latest.csv history/ERP_effective_latest.csv \
+                  history/TODAY_forward_curve_latest_A.csv history/ERP_effective_latest_A.csv \
+                  history/TODAY_forward_curve_latest_C.csv history/ERP_effective_latest_C.csv
+          git commit -m "erp-daily: publish ERP today curve, presets A/B/C $(date -u +%F)" || { echo "no changes to commit"; exit 0; }
           git pull --rebase --autostash origin main || true
           git push

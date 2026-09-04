@@ -8,7 +8,7 @@ and deterministic. __main__ is a self-contained SMOKE that reproduces June from 
 and writes the two files, so the writer path is verifiable without a live feed.
 """
 import json, csv, numpy as np
-from build_erp_daily import build_asof
+from build_erp_daily import build_asof, PLATEAU_PRESETS, PLATEAU_DEFAULT
 from held_state import resolve_held_state, JUNE_REPRO_STATE  # noqa: F401
 
 def construct_legs(state, real_knots, nominal_1y, sp_close):
@@ -21,13 +21,17 @@ def construct_legs(state, real_knots, nominal_1y, sp_close):
     norm_ey=100.0*float(state["normalized_X4"])*float(state["cpi_factor"])/float(sp_close)  # item 2: deflator
     return real, norm_ey
 
-def write_outputs(asof_date, r, outdir="."):
-    with open(f"{outdir}/TODAY_forward_curve_latest.csv","w",newline="") as f:
+def write_outputs(asof_date, r, outdir=".", suffix=""):
+    """Writes the two _latest files. `suffix` is "" for the stable, unsuffixed names every
+    existing consumer (apply_erp_overlay.py, this file's own __main__ smoke,
+    tests/test_erp_daily_writer.py) reads -- passing it at all is new as of 2026-09-04, and
+    the default reproduces the pre-existing filenames exactly."""
+    with open(f"{outdir}/TODAY_forward_curve_latest{suffix}.csv","w",newline="") as f:
         w=csv.writer(f); w.writerow(["tenor","fwd_real_yield","fwd_erp","fwd_coe","spot_real_yield","spot_erp","spot_coe"])
         for i in range(30):
             w.writerow([i+1,round(r["fwd_real"][i],4),round(r["fwd_erp"][i],4),round(r["fwd_coe"][i],4),
                         round(r["spot_real"][i],4),round(r["spot_erp"][i],4),round(r["spot_coe"][i],4)])
-    with open(f"{outdir}/ERP_effective_latest.csv","w",newline="") as f:
+    with open(f"{outdir}/ERP_effective_latest{suffix}.csv","w",newline="") as f:
         w=csv.writer(f); w.writerow(["vintage","date","eff_tips_ry","eff_erp","eff_coe","duration"])
         w.writerow([asof_date, asof_date, round(r["eff_tips"],4), round(r["eff_erp"],4), round(r["eff_coe"],4), round(r["D_out"],2)])
 
@@ -36,6 +40,34 @@ def run(asof_date, real_knots, nominal_1y, sp_close, state, outdir="."):
     r=build_asof(real, norm_ey, state["vs"], state["fey_in"], state["D_in"], state["cost"], state["corp_prem"])
     write_outputs(asof_date, r, outdir)
     return r
+
+def run_all_presets(asof_date, real_knots, nominal_1y, sp_close, state, outdir="."):
+    """Three calls to build_asof on IDENTICAL inputs, one per plateau preset -- no second
+    implementation of anything. Added 2026-09-04 (docs/engine/PASTE-THIS-next-SETUP-app-session.md
+    open item 3) so the SETUP application's A/B/C selector can fetch a real curve instead of
+    only recording a decision.
+
+    Preset B writes to the EXISTING stable names -- TODAY_forward_curve_latest.csv and
+    ERP_effective_latest.csv -- byte-for-byte what plain run() would write (see
+    tests/test_erp_daily_presets.py), because apply_erp_overlay.py and every downstream
+    consumer (ultimately aeg-valuation's outputs/) read exactly those two names and nothing
+    about this landing may change what they see. A and C are new, additive files beside them:
+    TODAY_forward_curve_latest_A.csv / ERP_effective_latest_A.csv, and the same with _C.
+    Nothing reads them yet except the SETUP bench -- adding them is pure plumbing (SAFE),
+    it touches no file aeg-valuation consumes, and it moves no published valuation number.
+
+    Returns {preset: build_asof(...) dict} so a caller can inspect all three without
+    re-reading the files it just wrote.
+    """
+    real, norm_ey = construct_legs(state, real_knots, nominal_1y, sp_close)
+    out = {}
+    for preset in PLATEAU_PRESETS:                       # "A", "B", "C" -- the dict's own order
+        r = build_asof(real, norm_ey, state["vs"], state["fey_in"], state["D_in"],
+                        state["cost"], state["corp_prem"], preset=preset)
+        suffix = "" if preset == PLATEAU_DEFAULT else f"_{preset}"
+        write_outputs(asof_date, r, outdir, suffix=suffix)
+        out[preset] = r
+    return out
 
 # ---------- monthly re-anchor: refresh the HELD vol_scale (vs) input ----------
 # Added 2026-08-18 (session 13, approved by James). This does NOT run as part of the daily

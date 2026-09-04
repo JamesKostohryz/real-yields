@@ -32,8 +32,12 @@ def test_writer_overlay_contract():
     curve = ovl.load_curve(os.path.join(d, "TODAY_forward_curve_latest.csv"))
     eff = ovl.load_effective(os.path.join(d, "ERP_effective_latest.csv"))
     assert len(curve) == 30, f"expected 30 tenors, got {len(curve)}"
-    assert abs(r["eff_tips"] - 2.349) < 0.01 and abs(r["eff_erp"] - 3.400) < 0.01 \
-        and abs(r["eff_coe"] - 5.748) < 0.011, "June effective tie failed"  # preset B, landed 2026-08-12
+    # RE-BASELINED 2026-09-04, same root cause and same fix as build_erp_daily.py's own
+    # JUNE_EFF (see the dated note there): the 2026-09-03 PCHIP interpolation change moved
+    # tips_eff for a 5/10/20/30-only knot set (no seven-year point) by +0.0212pp. This
+    # assertion was not updated when that landed and has been failing at HEAD since 06864f7.
+    assert abs(r["eff_tips"] - 2.370) < 0.01 and abs(r["eff_erp"] - 3.396) < 0.01 \
+        and abs(r["eff_coe"] - 5.765) < 0.011, "June effective tie failed"  # preset B, re-baselined 2026-09-04
     # load_effective already enforces eff_coe == eff_tips_ry + eff_erp within TOL_IDENT
     # and the live path: the resolver must answer on this tree, with the same file
     # BROKEN 2026-08-19 AND FIXED HERE. This used to assert the resolver returns the JUNE file.
