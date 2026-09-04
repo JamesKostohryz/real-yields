@@ -21,8 +21,22 @@ on:
 permissions:
   contents: write
 
+# ADDED 2026-09-04, after run #45 (SHA 0de5188) and seven others that same day failed the
+# same way: two workflow_dispatch runs landing ~20 seconds apart both write
+# outputs/erp_overlay_provenance.csv (every company run touches it, not just this ticker's
+# own files), the second one's `git pull --rebase` hits a real merge conflict on that shared
+# file, and the job dies in detached HEAD with no commit landed. Not a curve-logic defect --
+# confirmed by reading the job log (steps 1-8 all succeeded; only the Commit step failed) --
+# purely a missing concurrency guard. company_request.yml, this workflow's git-triggered
+# twin, already serializes on group "company-data-request" and writes the exact same shared
+# file; joining that group here serializes both entry points against each other and against
+# themselves, which is what should have been true from the start.
+concurrency:
+  group: company-data-request
+  cancel-in-progress: false
+
 # The Cockpit Google Sheet drives the run: put the ticker in its TICKER cell.
-# You keep the TICKER cell but LEAVE THE BOND ROWS EMPTY — EODHD now supplies the
+# You keep the TICKER cell but LEAVE THE BOND ROWS EMPTY â€” EODHD now supplies the
 # bonds. With no bond rows in the sheet, run_company falls back to the committed
 # bonds/<TICKER>.csv, which the "Refresh bonds from EODHD" step regenerates first.
 env:
@@ -92,7 +106,7 @@ jobs:
 
       # Decision B (ERP 0700): the valuation basis is ERP's forward curve, not the
       # pipeline's own real curve / variance ERP. Re-apply it on top of what the
-      # generator just wrote, BEFORE the commit — otherwise this job silently
+      # generator just wrote, BEFORE the commit â€” otherwise this job silently
       # reverts the decision (asfp-bot b701da3 did exactly that, leaving the engine
       # discounting at pipeline-rf + ERP-erp). No-op if history/ERP_OVERLAY.json is
       # absent; fails the job loudly rather than committing a wrong rate.
