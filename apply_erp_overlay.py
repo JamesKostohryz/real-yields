@@ -60,7 +60,7 @@ FAILURE POLICY
                         so a healthy age is 0-5 days (weekends/holidays). >5 means the daily
                         job stopped or the feed broke. Warns; never breaks the pipeline.
 """
-import csv, datetime as dt, glob, json, math, os, sys
+import csv, datetime as dt, glob, json, os, sys
 
 CONFIG = os.path.join("history", "ERP_OVERLAY.json")
 PROVENANCE = os.path.join("outputs", "erp_overlay_provenance.csv")
@@ -162,26 +162,111 @@ def vintage_age_days(eff, today=None):
 # A premium is an additive spread on top of a base rate, and the engine's decomposition requires
 # the pieces to SUM to the annual total, so premia must NOT be compounded. Applying expm1 to
 # everything would fix one error by introducing a smaller one.
+#
+# ---------------------------------------------------------------------------------------------
+# ⛔ AND THE `expm1` ABOVE WAS WRONG FOR THIS FILE. Corrected 2026-09-04, approved by James.
+#
+# The note above is right that an `_annual` file must be annual-compounded and that a rate and a
+# premium convert differently. It is wrong about WHICH annualisation this overlay needs, because
+# there are TWO rate paths in this repository and the 2026-08-22 fix applied one path's conversion
+# to the other path's data.
+#
+#   PATH 1  asfp/run_curves.py.  Fed GSW Svensson parameters (feds200628 / feds200805) evaluated
+#           through asfp/curves.py, rolled to today with FRED daily DELTAS. Genuinely
+#           continuously compounded -- that is what curves.py's header describes -- and
+#           units.annualize_rate's exp(cc/100)-1 is exactly right for it. It builds
+#           outputs/curve_latest.csv and the FIRST version of curve_latest_annual.csv.
+#
+#   PATH 2  run_erp_daily.py -> build_erp_daily.build_asof, which is what THIS overlay reads.
+#           Its inputs are FRED DFII5/7/10/20/30 and DGS1 -- Treasury constant-maturity par
+#           yields, quoted on a SEMIANNUAL bond-equivalent basis -- used with no conversion of
+#           any kind; there is no cc anywhere on this path. build_erp_daily then bootstraps its
+#           forwards as f_t = (1+z_t)^t / (1+z_{t-1})^(t-1) - 1, the ANNUAL formula, and calls
+#           that "engine convention" in its own module docstring.
+#
+# So this overlay was taking Treasury's quoted par yields and exponentiating them as if they were
+# continuous. Checkable on the published bytes: history/TODAY_forward_curve_latest.csv carries
+# spot_real_yield 2.98 at tenor 30, which is DFII30 verbatim, and curve_latest_annual.csv carried
+# real 0.030248464 = expm1(0.0298). Treasury's own number never appeared anywhere downstream.
+#
+# SIZE, measured on the 2026-09-03 curve. Too HIGH by 1.0bp at tenor 1, 1.5bp at 10, 2.3bp at 30
+# on the spot curve, and 3.3bp on the 1-year forward at tenor 30 -- which is the leg
+# Valuation!B20 capitalizes at. A cost of equity 3.3bp too high UNDERSTATES value by about 0.54%
+# on a NEP/r capitalisation. It is the mirror of the 2026-08-22 error in every respect except
+# sign, and it survived for the same reason: two plausible reals a few basis points apart.
+#
+# THE FIX IS A BASIS CONVERSION, NOT AN EXPONENTIAL. A yield quoted `freq` times a year has the
+# annual-compounded equivalent (1 + y/freq)^freq - 1. Treasury quotes CMT yields semiannually, so
+# freq = 2. Setting freq = 1 would publish Treasury's quoted number unchanged; the two differ by
+# 2.3bp at tenor 30 (2.9800% quoted, 3.0022% annual-effective, against the 3.0248% published
+# before this change). freq = 2 is the number the engine should DISCOUNT at, because the engine
+# compounds annually and a 2.98% semiannual quote earns 3.0022% over a year. Treasury's own
+# quoted figure is published beside it, unconverted, so the file still ties to FRED by eye --
+# see <T>_provenance.csv in aeg-valuation, which carries both under names that say which is which.
+#
+# AND THE FORWARD IS RE-BOOTSTRAPPED, NOT CONVERTED IN PLACE. The published fwd_real_yield was
+# bootstrapped from the QUOTED spot curve, so converting it column-wise would annualise a number
+# that was built on the other basis. real_annual_series() converts the spot knots first and then
+# re-derives the forward with build_erp_daily's own (1+z)^t rule, so the published forward is the
+# forward OF the published spot. Worth 0.10bp at most, and it removes a question rather than an
+# error.
 RATE_TARGETS = frozenset({"real", "real_fwd1y", "real_rf"})
 
+# Treasury quotes constant-maturity yields on a semiannual bond-equivalent basis. This constant
+# is the whole ruling: 2 publishes the annual-compounded equivalent, 1 publishes Treasury's
+# quoted number unchanged. Do not change it without changing the note above and the tests.
+TREASURY_QUOTE_FREQ = 2
 
-def _to_annual(target, cc_percent):
-    """cc percent -> the units the `_annual` contract requires for THIS column."""
+REAL_SPOT_SOURCE = "spot_real_yield"
+REAL_FWD_SOURCE = "fwd_real_yield"
+
+
+def annual_from_quoted(percent, freq=TREASURY_QUOTE_FREQ):
+    """A yield quoted `freq` times a year -> annual-compounded decimal. 2.98 -> 0.0300220."""
+    return (1.0 + percent / 100.0 / freq) ** freq - 1.0
+
+
+def real_annual_series(curve):
+    """(spot, fwd1y) annual-compounded decimals for tenors 1..30 from the ERP daily curve.
+
+    The spot knots are converted off Treasury's quoted basis; the one-year forward is then
+    re-bootstrapped from those converted spots with build_erp_daily.fwd_from_spot's own rule, so
+    the two published columns are consistent with each other and with the workbook, which derives
+    its forwards from the spot curve the same way (Market Data rows 22/24).
+    """
+    spot = {t: annual_from_quoted(curve[t][REAL_SPOT_SOURCE]) for t in range(1, 31)}
+    fwd = {1: spot[1]}
+    for t in range(2, 31):
+        fwd[t] = (1.0 + spot[t]) ** t / (1.0 + spot[t - 1]) ** (t - 1) - 1.0
+    return spot, fwd
+
+
+def _annual_value(target, source, t, curve, series):
+    """The value to write for one target column at one tenor, in `_annual` units."""
     if target in RATE_TARGETS:
-        return math.expm1(cc_percent / 100.0)
-    return cc_percent / 100.0          # a premium stays additive; see the note above
+        spot, fwd = series
+        if source == REAL_SPOT_SOURCE:
+            return spot[t]
+        if source == REAL_FWD_SOURCE:
+            return fwd[t]
+        raise OverlayError(
+            f"rate column {target!r} is mapped to {source!r}, whose compounding basis this "
+            f"overlay does not know; only {REAL_SPOT_SOURCE!r} and {REAL_FWD_SOURCE!r} are "
+            f"defined. Refusing to guess -- that guess is what 2026-08-22 and 2026-09-04 were.")
+    return curve[t][source] / 100.0    # a premium stays additive; see the note above
 # ---------------------------------------------------------------------------------------------
 
 
 def overlay_curve(path, curve, mapping):
     fn, rows = _rows(path)
+    series = real_annual_series(curve)
     for row in rows:
         t = int(float(row["tenor"]))
         if t not in curve:
             continue
         for target, source in mapping.items():
             if target in row:
-                row[target] = f"{_to_annual(target, curve[t][source]):.9f}"
+                row[target] = f"{_annual_value(target, source, t, curve, series):.9f}"
         if "nominal" in row and "breakeven" in row:
             row["nominal"] = f'{(1 + float(row["real"])) * (1 + float(row["breakeven"])) - 1:.9f}'
         if "nominal_fwd1y" in row and "breakeven_fwd1y" in row:
@@ -203,13 +288,14 @@ def overlay_coe_termstructure(path, curve, mapping):
     passed all the way through.
     """
     fn, rows = _rows(path)
+    series = real_annual_series(curve)
     for row in rows:
         t = int(float(row["tenor"]))
         if t not in curve:
             continue
         for target, source in mapping.items():
             if target in row:
-                row[target] = f"{_to_annual(target, curve[t][source]):.9f}"
+                row[target] = f"{_annual_value(target, source, t, curve, series):.9f}"
     _write(path, fn, rows)
     return f"{os.path.basename(path)}: real_rf + market_erp <- ERP forward curve"
 
@@ -264,14 +350,15 @@ def write_market_coe(curve):
     dispatch is the defect this file exists to remove, not one to reproduce.
     """
     os.makedirs("outputs", exist_ok=True)
+    series = real_annual_series(curve)
     with open(MARKET_COE, "w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["tenor", "real_rf", "market_erp"])
         for t in range(1, 31):
-            c = curve[t]
-            w.writerow([f"{float(t):.1f}",
-                        f"{_to_annual('real_rf', c['fwd_real_yield']):.9f}",
-                        f"{_to_annual('market_erp', c['fwd_erp']):.9f}"])
+            w.writerow([
+                f"{float(t):.1f}",
+                f"{_annual_value('real_rf', REAL_FWD_SOURCE, t, curve, series):.9f}",
+                f"{_annual_value('market_erp', 'fwd_erp', t, curve, series):.9f}"])
     return (f"{os.path.basename(MARKET_COE)}: real_rf + market_erp for every company, "
             f"tenors 1-30 (the company premium is added inside the engine)")
 

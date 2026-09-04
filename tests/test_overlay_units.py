@@ -18,6 +18,19 @@ sides of it. Runs under pytest and standalone.
 not in this repository), so the sentence above about it having "the conversion right all along" is
 history. The retirement guards that replaced tests/test_apply_erp_overlay_effective.py are at the
 bottom of this file.
+
+2026-09-04: AND THE 2026-08-22 FIX WAS ITSELF WRONG, IN THE OPPOSITE DIRECTION. It is true that an
+`_annual` file must be annual-compounded. It is not true that `exp(y/100)-1` is how you get there
+from THIS file. That formula belongs to asfp/run_curves.py, which evaluates the Fed's GSW Svensson
+curves and IS continuously compounded. This overlay reads history/TODAY_forward_curve_latest.csv,
+built by build_erp_daily from FRED DFII/DGS constant-maturity par yields quoted SEMIANNUALLY, with
+forwards bootstrapped as (1+z)^t. Two paths, one conversion, applied to the wrong one.
+
+The correction is a basis change, (1 + y/2)^2 - 1, not an exponential. It moves every real rate
+DOWN by 1.0bp at tenor 1 and 2.3bp at tenor 30, and 3.3bp on the one-year forward at tenor 30 --
+the leg Valuation!B20 capitalizes at -- which RAISES every valuation by about 0.54%. The tests
+below now pin the quoted basis, the direction, and the requirement James stated when he ruled it:
+the published number must still tie to FRED by eye.
 """
 import csv
 import math
@@ -30,22 +43,60 @@ import apply_erp_overlay as O                                        # noqa: E40
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def test_a_rate_compounds():
-    assert abs(O._to_annual("real", 3.03) - math.expm1(0.0303)) < 1e-15
-    assert abs(O._to_annual("real_fwd1y", 3.58) - math.expm1(0.0358)) < 1e-15
-    assert abs(O._to_annual("real_rf", 2.94) - math.expm1(0.0294)) < 1e-15
+def _series(spot_by_tenor, fwd_by_tenor=None):
+    """A minimal `curve` dict of the shape load_curve() returns, for the unit tests below."""
+    fwd_by_tenor = fwd_by_tenor or spot_by_tenor
+    return {t: {O.REAL_SPOT_SOURCE: spot_by_tenor[t],
+                O.REAL_FWD_SOURCE: fwd_by_tenor[t],
+                "fwd_erp": 3.3908} for t in range(1, 31)}
 
 
-def test_a_premium_does_not_compound():
+def test_a_rate_converts_off_treasurys_quoted_basis_not_off_cc():
+    """THE 2026-09-04 CORRECTION. The ERP daily file's rate columns are Treasury constant-maturity
+    par yields, quoted semiannually. They were never continuously compounded, so exp(y/100)-1 --
+    which the 2026-08-22 fix applied -- over-compounds them by roughly y^2/4."""
+    assert abs(O.annual_from_quoted(2.98) - ((1 + 0.0298 / 2) ** 2 - 1)) < 1e-15
+    assert O.annual_from_quoted(2.98) < math.expm1(0.0298)          # the error that was there
+    assert O.annual_from_quoted(2.98) > 0.0298                      # and it is still a conversion
+    assert abs(O.annual_from_quoted(2.98) - 0.030022010) < 1e-9     # 2.9800% quoted = 3.0022% p.a.
+
+
+def test_the_overstatement_that_was_published_is_pinned_by_size():
+    """Direction and size both matter: expm1 made every real rate too HIGH, which made every
+    valuation too LOW. 2.3bp at tenor 30 on the spot curve."""
+    over = (math.expm1(0.0298) - O.annual_from_quoted(2.98)) * 1e4
+    assert 2.0 < over < 2.6, over
+
+
+def test_a_premium_does_not_convert_at_all():
     """A premium is an additive spread on a base rate; the engine's decomposition requires the
     pieces to SUM to the annual total, so compounding it would fix one error with a smaller one."""
-    assert abs(O._to_annual("market_erp", 3.3908) - 0.033908) < 1e-15
+    curve = _series({t: 2.98 for t in range(1, 31)})
+    v = O._annual_value("market_erp", "fwd_erp", 30, curve, O.real_annual_series(curve))
+    assert abs(v - 0.033908) < 1e-15
 
 
-def test_the_old_code_understated_every_real_rate():
-    """The direction matters: cc/100 < exp(cc/100)-1, so the bug made rates too LOW and every
-    valuation too HIGH."""
-    assert O._to_annual("real", 3.03) > 3.03 / 100.0
+def test_the_forward_is_rebootstrapped_from_the_converted_spot():
+    """Not converted column-wise. The published fwd_real_yield was bootstrapped from the QUOTED
+    spot curve, so the overlay must convert the spots and re-derive -- which is also what the
+    workbook does in Market Data rows 22/24 from the spot curve it is handed."""
+    spot = {t: 2.0 + 0.03 * t for t in range(1, 31)}
+    s, f = O.real_annual_series(_series(spot))
+    assert abs(f[1] - s[1]) < 1e-15
+    for t in range(2, 31):
+        expect = (1 + s[t]) ** t / (1 + s[t - 1]) ** (t - 1) - 1
+        assert abs(f[t] - expect) < 1e-15
+
+
+def test_an_unknown_rate_source_is_refused_rather_than_guessed():
+    """Both the 2026-08-22 and the 2026-09-04 defects were a guess about an input's compounding
+    basis. A new mapping must fail loudly instead of inheriting one."""
+    curve = _series({t: 2.98 for t in range(1, 31)})
+    try:
+        O._annual_value("real", "some_new_column", 30, curve, O.real_annual_series(curve))
+    except O.OverlayError:
+        return
+    raise AssertionError("an unmapped rate source was converted on an assumed basis")
 
 
 def _curve_files():
@@ -57,23 +108,38 @@ def _curve_files():
             {int(float(r["tenor"])): r for r in csv.DictReader(open(c))})
 
 
-def test_published_curve_is_annualised():
+def test_published_curve_is_annualised_off_the_quoted_basis():
     H, C = _curve_files()
     if H is None:
         return
     bad = [t for t in C if t in H
-           and abs(float(C[t]["real"]) - math.expm1(float(H[t]["spot_real_yield"]) / 100)) > 1e-6]
-    assert not bad, f"tenors not annualised from the history curve: {bad[:5]}"
+           and abs(float(C[t]["real"])
+                   - O.annual_from_quoted(float(H[t]["spot_real_yield"]))) > 1e-6]
+    assert not bad, f"tenors not converted from the history curve: {bad[:5]}"
 
 
-def test_no_tenor_carries_the_raw_cc_value():
-    """The bug, stated as the thing that must never be true again."""
+def test_no_tenor_carries_the_expm1_value():
+    """The 2026-09-04 bug, stated as the thing that must never be true again. Treasury's DFII
+    yields are not continuously compounded and must never be exponentiated as if they were."""
     H, C = _curve_files()
     if H is None:
         return
-    raw = [t for t in C if t in H
-           and abs(float(C[t]["real"]) - float(H[t]["spot_real_yield"]) / 100) < 1e-9]
-    assert not raw, f"raw cc written into an _annual file at tenors {raw[:5]}"
+    bad = [t for t in C if t in H
+           and abs(float(C[t]["real"])
+                   - math.expm1(float(H[t]["spot_real_yield"]) / 100)) < 1e-9]
+    assert not bad, f"expm1 of a quoted par yield written into an _annual file at {bad[:5]}"
+
+
+def test_the_published_curve_still_ties_to_treasury_by_eye():
+    """James's requirement, 2026-09-04: a reader must be able to check the published real rate
+    against FRED without help. The conversion is a basis change, not a different rate, so the
+    published figure stays within 3bp of Treasury's own quote at every tenor."""
+    H, C = _curve_files()
+    if H is None:
+        return
+    bad = [t for t in C if t in H
+           and abs(float(C[t]["real"]) * 100 - float(H[t]["spot_real_yield"])) > 0.03]
+    assert not bad, f"published real drifts more than 3bp from Treasury's quote at {bad[:5]}"
 
 
 def test_fisher_identity_holds():
