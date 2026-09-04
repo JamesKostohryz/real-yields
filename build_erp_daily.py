@@ -26,6 +26,7 @@ so a change to the engine is distinguishable from a change to the input.
 """
 import pandas as pd, numpy as np
 from scipy.stats import norm
+from scipy.interpolate import PchipInterpolator
 
 # ---------- LOCKED v4 parameters (METHODOLOGY_effective_ERP_COE.md sec.12) ----------
 R_NEUTRAL=2.0; H_CONV=20.0; VARP=3.0; C=7.5; VOLNORM=13.0
@@ -87,11 +88,47 @@ def _vs_at(vs, T):
     return float(v[min(int(T), 30) - 1])
 
 
-def build_asof(real_tips_5pt, norm_ey, vs, fey_in, D_in, cost, corp_prem=CORP_PREM_DEFAULT, preset=PLATEAU_DEFAULT):
-    """One daily step from the incoming monthly state. Returns effective + fwd term structure."""
+def build_asof(real_tips_knots, norm_ey, vs, fey_in, D_in, cost, corp_prem=CORP_PREM_DEFAULT, preset=PLATEAU_DEFAULT):
+    """One daily step from the incoming monthly state. Returns effective + fwd term structure.
+
+    `real_tips_knots` is {tenor: real par yield pct} and EVERY key is used as an interpolation
+    knot. It was named `real_tips_5pt` and hard-coded to [1,5,10,20,30] until 2026-09-03; the
+    note on the interpolation line below says why that was wrong.
+    """
     if preset not in PLATEAU_PRESETS: raise KeyError(f"unknown preset {preset!r}; use one of {list(PLATEAU_PRESETS)}")
     preset_val=PLATEAU_PRESETS[preset]
-    ks=[1,5,10,20,30]; yv=np.interp(Tclip,ks,[real_tips_5pt[k] for k in ks])
+    # ---------------------------------------------------------------------------------------
+    # EVERY PUBLISHED KNOT, AND A MONOTONE INTERPOLANT. Changed 2026-09-03, approved by James.
+    #
+    # This line read `ks=[1,5,10,20,30]; yv=np.interp(...)`. Two faults, both in one line.
+    #
+    # (1) IT DROPPED A PUBLISHED KNOT. Treasury publishes the real par curve at 5, 7, 10, 20
+    #     and 30 years, and `asfp.datasources.DFII_MAP` has carried all five since it was
+    #     written. The caller asked FRED for four and this line hard-coded the same four, so
+    #     the SEVEN-YEAR point -- an observed market rate, already in the map, costing nothing
+    #     to fetch -- was interpolated straight through. Measured on the 2026-09-03 curve: the
+    #     engine read 2.2580% at seven years against Treasury's published 2.2700%.
+    #
+    # (2) LINEAR INTERPOLATION KINKS THE CURVE AT EVERY KNOT. PCHIP is monotone and
+    #     shape-preserving: it cannot overshoot between knots, and a flat segment stays flat --
+    #     which matters at the long end, where the nominal curve was flat from twenty to thirty
+    #     years on 2026-09-03 and a naive fit slopes through it.
+    #
+    # NO EXTRAPOLATION, EVER. Tclip is clipped to 30 and 30 is always a knot, so the
+    # interpolant is never asked for a point outside its own data. If a caller ever supplies
+    # knots that do not span 1..30, extrapolate=False yields NaN and the run DIES HERE rather
+    # than publishing a made-up long end. `outputs/curve_latest.csv` flags its own tenors 21-30
+    # `back-constructed, reliability 0.0`; this path will not do that.
+    #
+    # SIZE, measured before landing. June regression inputs (no 7y knot in that vintage, so
+    # this is linear -> PCHIP alone): eff_tips +0.0212pp, eff_coe +0.0168pp. The 2026-09-03
+    # live curve with the 7y knot restored: eff_coe +0.0045pp, and the largest move anywhere
+    # on the thirty-tenor cost-of-equity curve is 0.0217pp.
+    ks=sorted(real_tips_knots)
+    yv=PchipInterpolator(ks,[real_tips_knots[k] for k in ks],extrapolate=False)(Tclip)
+    if np.isnan(yv).any():
+        raise ValueError(f"real knots {ks} do not span tenors 1..30; refusing to extrapolate")
+    # ---------------------------------------------------------------------------------------
     w=wget(D_in); tips_eff=float(w@yv)
     bv=np.array([base_val_T(norm_ey,yv[i],Tclip[i],_vs_at(vs,Tclip[i]),fey_in) for i in range(TMAX)])
     bv_blend=np.array([(1-plateau_w(Tg[i]))*bv[i]+plateau_w(Tg[i])*preset_val for i in range(TMAX)])

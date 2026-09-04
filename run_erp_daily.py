@@ -11,9 +11,12 @@ import json, csv, numpy as np
 from build_erp_daily import build_asof
 from held_state import resolve_held_state, JUNE_REPRO_STATE  # noqa: F401
 
-def construct_legs(state, reals_5_10_20_30, nominal_1y, sp_close):
-    """ERP-owned input construction. reals_* is {5,10,20,30:pct}. Returns (real_5pt dict, norm_ey)."""
-    real={k:float(reals_5_10_20_30[k]) for k in (5,10,20,30)}
+def construct_legs(state, real_knots, nominal_1y, sp_close):
+    """ERP-owned input construction. `real_knots` is {tenor: real par yield pct} and EVERY key
+    is carried through to build_asof as an interpolation knot -- it was hard-coded to
+    (5,10,20,30) until 2026-09-03, which silently discarded the published seven-year point.
+    Returns (real knot dict incl. the constructed 1y, norm_ey)."""
+    real={int(k):float(v) for k,v in real_knots.items()}
     real[1]=float(nominal_1y)-float(state["breakeven1y"])           # item 1: 1y short-end
     norm_ey=100.0*float(state["normalized_X4"])*float(state["cpi_factor"])/float(sp_close)  # item 2: deflator
     return real, norm_ey
@@ -28,8 +31,8 @@ def write_outputs(asof_date, r, outdir="."):
         w=csv.writer(f); w.writerow(["vintage","date","eff_tips_ry","eff_erp","eff_coe","duration"])
         w.writerow([asof_date, asof_date, round(r["eff_tips"],4), round(r["eff_erp"],4), round(r["eff_coe"],4), round(r["D_out"],2)])
 
-def run(asof_date, reals_5_10_20_30, nominal_1y, sp_close, state, outdir="."):
-    real, norm_ey = construct_legs(state, reals_5_10_20_30, nominal_1y, sp_close)
+def run(asof_date, real_knots, nominal_1y, sp_close, state, outdir="."):
+    real, norm_ey = construct_legs(state, real_knots, nominal_1y, sp_close)
     r=build_asof(real, norm_ey, state["vs"], state["fey_in"], state["D_in"], state["cost"], state["corp_prem"])
     write_outputs(asof_date, r, outdir)
     return r
@@ -82,10 +85,10 @@ SP500_SERIES = "SP500"   # FRED S&P 500 index level (daily close). ERP: confirm 
 
 def fetch_daily_inputs(asof_date, api_key=None):
     """ADAPTER — wired to the repo's FRED data step (asfp.datasources). Returns
-       (reals_5_10_20_30: {5,10,20,30 -> real par yield pct}, nominal_1y: pct, sp_close: index level),
+       (real_knots: {5,7,10,20,30 -> real par yield pct}, nominal_1y: pct, sp_close: index level),
        each the latest observation on/before asof_date.
        Sources (per ERP_HELD_STATE_*.json['sources']):
-         real par 5/10/20/30 -> FRED DFII5/DFII10/DFII20/DFII30 (Treasury Daily Par REAL Yield Curve),
+         real par 5/7/10/20/30 -> FRED DFII5/DFII7/DFII10/DFII20/DFII30 (Treasury Daily Par REAL Yield Curve),
          nominal 1y          -> FRED DGS1 (Treasury Daily Par Yield Curve, 1Y),
          S&P 500 close        -> FRED SP500.
        Import is function-local so the hermetic gate/tests stay fully offline."""
@@ -94,7 +97,11 @@ def fetch_daily_inputs(asof_date, api_key=None):
     key = api_key or os.environ.get("FRED_API_KEY")
     if not key:
         raise RuntimeError("FRED_API_KEY not set (required for the live daily fetch)")
-    reals = {k: ds.fetch_fred_asof(key, ds.DFII_MAP[k], asof_date)[0] for k in (5, 10, 20, 30)}
+    # ALL FIVE PUBLISHED REAL KNOTS. This asked for (5, 10, 20, 30) until 2026-09-03 and
+    # DFII_MAP has carried the seven-year all along, so the engine was throwing away an
+    # observed Treasury rate on every single run. Iterate the map; do not re-list it here.
+    reals = {k: ds.fetch_fred_asof(key, ds.DFII_MAP[k], asof_date)[0]
+             for k in sorted(ds.DFII_MAP)}
     nominal_1y = ds.fetch_fred_asof(key, ds.DGS_MAP[1], asof_date)[0]
     sp_close = ds.fetch_fred_asof(key, SP500_SERIES, asof_date)[0]
     missing = [n for n, v in [("nominal_1y", nominal_1y), ("sp_close", sp_close)] if v is None]
@@ -133,9 +140,19 @@ if __name__=="__main__":
     outdir=tempfile.mkdtemp()
     r=run("2026-06-01", {5:1.885,10:2.204,20:2.745,30:2.73}, nominal_1y=3.83, sp_close=7450.03, state=state, outdir=outdir)
     print("RUNNER SMOKE (June): eff tips=%.3f erp=%.3f coe=%.3f dur=%.2f"%(r["eff_tips"],r["eff_erp"],r["eff_coe"],r["D_out"]))
-    assert abs(r["eff_tips"]-2.349)<0.01 and abs(r["eff_erp"]-3.400)<0.01 and abs(r["eff_coe"]-5.748)<0.01, "SMOKE FAILED"  # preset B, landed 2026-08-12
+    # RE-BASELINED 2026-09-03 when build_asof moved from linear interpolation over a
+    # hard-coded [1,5,10,20,30] to PCHIP over every supplied knot. The June state carries no
+    # seven-year point, so this delta is the interpolant alone:
+    #     eff_tips 2.3485 -> 2.3697   eff_erp 3.3999 -> 3.3955   eff_coe 5.7484 -> 5.7653
+    # The previous baseline was 2.349 / 3.400 / 5.748 (preset B, landed 2026-08-12). A
+    # regression fixture that is re-baselined without recording what it used to assert stops
+    # being a record of anything, so both triples stay here.
+    assert abs(r["eff_tips"]-2.370)<0.01 and abs(r["eff_erp"]-3.396)<0.01 and abs(r["eff_coe"]-5.765)<0.01, "SMOKE FAILED"
     import pandas as pd
     got=pd.read_csv(os.path.join(outdir,"TODAY_forward_curve_latest.csv"))
+    # REGENERATED 2026-09-03 for the PCHIP change; the linear-era curve is retained beside it
+    # as history/TODAY_forward_curve_2026-06_presetB_LINEAR-RETIRED-2026-09-03.csv, which
+    # differs from this one by up to 0.0884pp on spot_coe.
     ref=pd.read_csv(os.path.join(ROOT,"history","TODAY_forward_curve_2026-06_presetB.csv"))
     sp=max(abs(got.spot_coe-ref.spot_coe)); print("  wrote _latest files to a temp dir; spot_coe max|delta| vs committed June (preset B) = %.4f pp"%sp)
     print("  ERP_effective_latest.csv ->", open(os.path.join(outdir,"ERP_effective_latest.csv")).read().strip().replace(chr(10)," | "))
