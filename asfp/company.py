@@ -10,6 +10,8 @@ are pure functions, unit-tested offline against AT&T.
 """
 from __future__ import annotations
 
+import datetime as dt
+
 import numpy as np
 
 try:
@@ -75,6 +77,39 @@ def pick_equity_vol(iv, rv, lo=0.05, hi=2.0, default=0.25):
 # formula. The approved score has no floor at zero; it is an increment that may be negative.
 
 
+# ----------------------------------------------------- descriptive company facts
+def _company_facts(tk, fast):
+    """Sector/industry/country/52-week range/market cap — descriptive facts, not
+    model inputs. Nothing here is read by name into a valuation; added 2026-09-05
+    for the SETUP app's 'at a glance' panel (and, eventually, the screener).
+
+    fast_info already carries the 52-week range, market cap, exchange and currency
+    for free — no extra network call. Only sector/industry/country/employees/name
+    need the slower .info fetch, wrapped so a flaky or rate-limited call here can
+    never take down the rest of the job: on failure this returns Nones for those
+    five fields, never raises, and never guesses."""
+    facts = {
+        "cf_week52_high": fast.get("yearHigh"),
+        "cf_week52_low": fast.get("yearLow"),
+        "cf_market_cap": fast.get("marketCap"),
+        "cf_currency": fast.get("currency"),
+        "cf_exchange": fast.get("exchange"),
+        "cf_sector": None, "cf_industry": None, "cf_country": None,
+        "cf_employees": None, "cf_long_name": None,
+    }
+    try:
+        info = tk.info
+        facts["cf_sector"] = info.get("sector")
+        facts["cf_industry"] = info.get("industry")
+        facts["cf_country"] = info.get("country")
+        facts["cf_employees"] = info.get("fullTimeEmployees")
+        facts["cf_long_name"] = info.get("longName") or info.get("shortName")
+    except Exception:
+        pass   # descriptive only — never block the run over a slow/flaky .info call
+    facts["cf_fetched_utc"] = dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    return facts
+
+
 # --------------------------------------------------------- yfinance pulls (runner)
 def fetch_company(ticker, avg_correlation=0.35):
     """Pull fundamentals + options via yfinance and assemble the company inputs.
@@ -116,11 +151,14 @@ def fetch_company(ticker, avg_correlation=0.35):
     # single-element curve) when the long-dated chain is thin. In vol POINTS.
     equity_vol_ts = fetch_equity_vol_ts(tk, price, fallback_vol=equity_vol)
 
+    cfacts = _company_facts(tk, fast)
+
     return dict(ticker=ticker, price=price, **lev,
                 book_total_debt=total_debt,   # reported book debt (par mark for bondless MVD)
                 equity_vol=equity_vol, sigma_V=sigma_V,
                 equity_vol_ts=equity_vol_ts,
-                avg_correlation=avg_correlation)
+                avg_correlation=avg_correlation,
+                **cfacts)
 
 
 # RETIRED 2026-09-02 -- fetch_smile(), fetch_smiles(), realized_skew() and skew_diag().

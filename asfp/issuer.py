@@ -172,4 +172,20 @@ def write_outputs(outdir, ticker, tables, meta, fund):
     if meta.get("market_value_of_debt") is not None:
         rows.append({"field": "mvd_basis", "value": meta.get("mvd_basis") or "book-scaled"})
     pd.DataFrame(rows).to_csv(f"{outdir}/company_{t}.csv", index=False)
-    return [f"cod_{t}.csv", f"cod_{t}_annual.csv", f"company_{t}.csv"]
+    written = [f"cod_{t}.csv", f"cod_{t}_annual.csv", f"company_{t}.csv"]
+
+    # company_facts_<T>.csv: descriptive facts ONLY -- sector/industry/country/52-week
+    # range/market cap/employees. Kept SEPARATE from company_<T>.csv on purpose: that
+    # file is model inputs read by NAME into a valuation (market_value_of_debt, the
+    # debt-analytics fields); this one is display-only, for SETUP's "at a glance"
+    # panel (and, later, the screener), and nothing in it should ever be read into a
+    # calculation. Added 2026-09-05. Soft: a field yfinance didn't return comes back
+    # as an empty cell, never a guess -- see company._company_facts.
+    cf_order = ["cf_long_name", "cf_sector", "cf_industry", "cf_country",
+                "cf_exchange", "cf_currency", "cf_market_cap",
+                "cf_week52_high", "cf_week52_low", "cf_employees", "cf_fetched_utc"]
+    if any(fund.get(k) is not None for k in cf_order):
+        cf_rows = [{"field": k[3:], "value": fund.get(k)} for k in cf_order]
+        pd.DataFrame(cf_rows).to_csv(f"{outdir}/company_facts_{t}.csv", index=False)
+        written.append(f"company_facts_{t}.csv")
+    return written
