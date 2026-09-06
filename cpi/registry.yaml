@@ -1,0 +1,83 @@
+# CPI REGISTRY — one entry per currency the engine can deflate in.
+#
+# WHY THIS FILE EXISTS. Standing rule 11 (00-START-HERE.md): a foreign filer's statements are
+# deflated by its OWN country's consumer price index, never converted to dollars. This registry says
+# where each currency's index comes from. It is the exact sibling of fx_rates.REGISTRY, and it
+# carries the same discipline: a currency is NOT usable until its series has been reconciled against
+# a real filing, because a wrong base year or a wrong series is invisible to every internal check the
+# engine has -- the workbook would tie perfectly on the wrong numbers.
+#
+# SOURCES, and why these ones.
+#   fred  FRED's public graph CSV / authenticated API. Already in production for the US.
+#   oecd  The OECD's OWN SDMX interface. Free, no key, monthly, INDEX level (IX), base 2015, and it
+#         covers non-member economies. NOTE: FRED's *mirrors* of the OECD series are stale by 1-5
+#         years (CHNCPIALLMINMEI stops 2025-04); the OECD's own interface is current. Verified
+#         2026-09-06.
+#
+#         THE OECD RUNS TWO DATAFLOWS AND A COUNTRY IS IN EXACTLY ONE OF THEM. Countries still on
+#         the COICOP 1999 classification are in DF_PRICES_ALL; those migrated to COICOP 2018 are in
+#         DF_PRICES_C2018_ALL, and querying the wrong one returns "no observations" rather than an
+#         error -- which reads exactly like a stale series and is why `flow` is per-currency and
+#         explicit. Measured 2026-09-06: CHN and BRA are COICOP 1999, JPN and MEX are COICOP 2018,
+#         and all four are current to 2026-07.
+#   wb    World Bank FP.CPI.TOTL. ANNUAL only. Cross-check and last resort, never primary.
+#
+# base_period is recorded so a REBASING is visible instead of arriving as a step in the deflator.
+# Bases need not agree across currencies: the engine uses a ratio to its own base year.
+
+currencies:
+  USD:
+    source: fred
+    series: CPIAUCSL
+    base_period: "1982-1984"
+    country: United States
+    verified: true
+    verified_note: "in production since the engine was built; the US deflator path is unchanged"
+  EUR:
+    source: fred
+    series: CP0000EZ19M086NEST
+    base_period: "2015"
+    country: Euro area (19)
+    verified: false
+    verified_note: "Eurostat harmonised index, current to 2026-07. NOT yet reconciled to a filing."
+  CNY:
+    source: oecd
+    series: CHN
+    flow: c1999
+    base_period: "2015"
+    country: China
+    verified: false
+    verified_note: "current to 2026-07 as at 2026-09-06. Reconcile against YMM's 20-F before use."
+  JPY:
+    source: oecd
+    series: JPN
+    flow: c2018
+    base_period: "2015"
+    country: Japan
+    verified: false
+    verified_note: "COICOP 2018 dataflow, current to 2026-07. NOT yet reconciled to a filing."
+  BRL:
+    source: oecd
+    series: BRA
+    flow: c1999
+    base_period: "2015"
+    country: Brazil
+    verified: false
+    verified_note: "current to 2026-07 as at 2026-09-06. NOT yet reconciled to a filing."
+  MXN:
+    source: oecd
+    series: MEX
+    flow: c2018
+    base_period: "2015"
+    country: Mexico
+    verified: false
+    verified_note: "COICOP 2018 dataflow, current to 2026-07. NOT yet reconciled to a filing."
+
+# A currency's index is STALE if its latest month is older than this many days. The refresh job
+# flags it; the engine refuses to value a filer in a stale currency (see the proposal, section 5).
+# OECD dataflow identifiers, referenced by `flow` above.
+oecd_flows:
+  c1999: "OECD.SDD.TPS,DSD_PRICES@DF_PRICES_ALL,1.0"
+  c2018: "OECD.SDD.TPS,DSD_PRICES_COICOP2018@DF_PRICES_C2018_ALL,1.0"
+
+stale_after_days: 120
