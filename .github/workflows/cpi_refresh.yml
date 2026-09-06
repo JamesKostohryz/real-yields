@@ -1,0 +1,61 @@
+name: cpi-refresh (foreign-filer deflator feed)
+
+# WHY WEEKLY AND NOT MONTHLY. The data is monthly, so monthly sounds like the natural cadence and is
+# the wrong choice: agencies publish on their own calendars and revise between releases, so a
+# monthly job means worst-case staleness of about thirty days and one missed run means sixty. This
+# payload is a few kilobytes from free interfaces. Weekly costs nothing and bounds staleness at
+# seven days. The rate feed already runs daily for the same reason.
+#
+# WHY EVERY RUN WRITES A DATED SNAPSHOT. Consumer price indices are REVISED. A valuation is point in
+# time (standing rule 3) and must reproduce. If the deflator underneath a published valuation moves,
+# nothing fails and the number is simply different -- so outputs/cpi_history/ keeps an immutable
+# vintage per run and every valuation records which one it stood on.
+on:
+  schedule:
+    - cron: "0 6 * * 1"          # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cpi-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install pyyaml
+      - name: Fetch consumer price indices
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: python cpi/fetch_cpi.py
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### CPI feed"
+            echo ""
+            echo '```'
+            cat outputs/cpi_provenance.csv 2>/dev/null || echo "no provenance written"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Commit
+        run: |
+          set -euo pipefail
+          git config user.name  "aeg-cpi[bot]"
+          git config user.email "aeg-cpi@users.noreply.github.com"
+          git add outputs/cpi_monthly.csv outputs/cpi_annual.csv outputs/cpi_provenance.csv outputs/cpi_history/
+          if git diff --cached --quiet; then
+            echo "no change in the consumer price feed"
+          else
+            git commit -m "cpi: refresh the foreign-filer deflator feed $(date -u +%F)"
+            git pull --rebase --autostash origin "$(git rev-parse --abbrev-ref HEAD)" || true
+            git push
+          fi
