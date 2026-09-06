@@ -24,60 +24,137 @@
 #
 # base_period is recorded so a REBASING is visible instead of arriving as a step in the deflator.
 # Bases need not agree across currencies: the engine uses a ratio to its own base year.
+#
+# ---------------------------------------------------------------------------------------------
+# HISTORY DEPTH — CHANGED 2026-09-06, ON JAMES'S INSTRUCTION: "Get as much monthly data as you can
+# and we will use what we need for this. We will need the monthly data for other things."
+#
+# The first build asked every source for 1990 onward, which was an arbitrary floor and threw away
+# decades that are free. Every source is now asked for everything it has, and `history_from` below
+# records what each one actually returned when probed on 2026-09-06 -- measured, not assumed, so a
+# series that silently shortens is visible as a disagreement with this file rather than as a hole.
+#
+# THE ENGINE ONLY NEEDS ANNUAL AVERAGES (Market Data rows 8/14 are one number per year), so the
+# monthly depth is not for the deflator. It is for three other things: forming a FISCAL-year average
+# rather than a calendar-year one (deflator_extend currently ignores fy_end_month, a live defect --
+# AEG-Project/docs/engine/SPEC-Foreign-Filer-Data-Requirements-2026-09-06.md section 1.2), giving
+# the template's 1985 start real coverage, and James's other uses.
+# ---------------------------------------------------------------------------------------------
 
 currencies:
   USD:
     source: fred
-    series: CPIAUCSL
+    series: CPIAUCNS
     base_period: "1982-1984"
     country: United States
+    history_from: "1913-01"
     verified: true
-    verified_note: "in production since the engine was built; the US deflator path is unchanged"
+    verified_note: >-
+      In production since the engine was built. SERIES CHANGED 2026-09-06 from CPIAUCSL to
+      CPIAUCNS, and this is a CORRECTION, not a preference. CPIAUCSL is the SEASONALLY ADJUSTED
+      index; the engine's own US deflator path, deflator_extend.FRED_CPI_SERIES, has always used
+      CPIAUCNS, whose calendar-year mean IS the BLS published annual average. This registry
+      disagreeing with the engine on the dollar series meant the feed could never have been used to
+      reproduce the US deflator it is modelled on. CPIAUCNS also runs from 1913 against CPIAUCSL's
+      1947. No published valuation changes: F14 records that the engine does not read this feed yet.
   EUR:
     source: fred
     series: CP0000EZ19M086NEST
     base_period: "2015"
     country: Euro area (19)
+    history_from: "1996-12"
     verified: false
-    verified_note: "Eurostat harmonised index, current to 2026-07. NOT yet reconciled to a filing."
+    verified_note: >-
+      Eurostat harmonised index, current to 2026-07. NOT yet reconciled to a filing. SHORTEST
+      HISTORY OF THE SIX and it cannot be extended honestly: the euro did not exist before 1999 and
+      the harmonised index itself starts 1996-12. FRED's CPHPTT01EZM659N reaches back to 1991-01 but
+      STOPS at 2023-01 and is a different construction, so splicing it on would put two definitions
+      in one series to buy five pre-euro years -- refused deliberately. A European filer with
+      statements before 1996 needs this decided, not worked around.
   CNY:
     source: oecd
     series: CHN
     flow: c1999
     base_period: "2015"
     country: China
+    history_from: "1993-01"
     verified: false
-    verified_note: "current to 2026-07 as at 2026-09-06. Reconcile against YMM's 20-F before use."
+    verified_note: >-
+      Current to 2026-07 as at 2026-09-06. Reconcile against YMM's 20-F before use. 1993-01 IS THE
+      FLOOR AND IT IS THE DATA, NOT THE INTERMEDIARY: the OECD's own interface and FRED's mirror
+      (CHNCPIALLMINMEI) both begin 1993-01, checked separately. World Bank FP.CPI.TOTL has China
+      annually from 1986 and is NOT spliced in -- see the note under `annual_backfill` below.
   JPY:
     source: oecd
     series: JPN
     flow: c2018
     base_period: "2015"
     country: Japan
+    history_from: "1955-01"
     verified: false
-    verified_note: "COICOP 2018 dataflow, current to 2026-07. NOT yet reconciled to a filing."
+    verified_note: "COICOP 2018 dataflow, current to 2026-07. NOT yet reconciled to a filing. Deepest history of the six: 859 months."
   BRL:
     source: oecd
     series: BRA
     flow: c1999
     base_period: "2015"
     country: Brazil
+    history_from: "1979-12"
     verified: false
-    verified_note: "current to 2026-07 as at 2026-09-06. NOT yet reconciled to a filing."
+    verified_note: >-
+      Current to 2026-07 as at 2026-09-06. NOT yet reconciled to a filing. CARRIES BRAZIL'S
+      HYPERINFLATION AND SIX CURRENCY REFORMS: the index spans roughly twelve orders of magnitude
+      from 1979 to today, so an annual average of a hyperinflationary year is a far weaker summary
+      of purchasing power than it is for a low-inflation country, and a fiscal year straddling a
+      currency reform needs checking by hand before any Brazilian filer is valued.
   MXN:
     source: oecd
     series: MEX
     flow: c2018
     base_period: "2015"
     country: Mexico
+    history_from: "1969-01"
     verified: false
-    verified_note: "COICOP 2018 dataflow, current to 2026-07. NOT yet reconciled to a filing."
+    verified_note: >-
+      COICOP 2018 dataflow, current to 2026-07. NOT yet reconciled to a filing. Spans the 1993
+      nuevo peso redenomination (1000:1); the index is continuous across it, the currency is not.
 
-# A currency's index is STALE if its latest month is older than this many days. The refresh job
-# flags it; the engine refuses to value a filer in a stale currency (see the proposal, section 5).
+# ANNUAL BACKFILL — AVAILABLE, DELIBERATELY NOT USED, AND THE REASON IS THE WHOLE POINT.
+#
+# World Bank FP.CPI.TOTL is annual and reaches further back than the monthly sources for two
+# currencies: China from 1986 (against 1993 monthly) and Brazil from 1980. Splicing it onto the
+# front of a monthly series would fill the template's 1985 start for a Chinese filer.
+#
+# It is NOT done, because the two are different constructions on different bases, and a splice joint
+# inside a deflator is exactly the kind of step this project has been burned by: it does not fail, it
+# just restates one stretch of history on a slightly different footing, and the anchor and the
+# normalizer are computed off that history. If a filer ever genuinely needs pre-1993 Chinese years,
+# that is a ruling with a documented joint and a measured discontinuity -- not a default.
+#
+# What the World Bank series IS used for is the cross-check in tests: eight country-years agreed to
+# within 0.018 percentage points on 2026-09-06.
+annual_backfill:
+  source: wb
+  indicator: FP.CPI.TOTL
+  use: cross-check only
+  earliest:
+    CNY: 1986
+    BRL: 1980
+    JPY: 1960
+    MXN: 1960
+    USD: 1960
+
 # OECD dataflow identifiers, referenced by `flow` above.
 oecd_flows:
   c1999: "OECD.SDD.TPS,DSD_PRICES@DF_PRICES_ALL,1.0"
   c2018: "OECD.SDD.TPS,DSD_PRICES_COICOP2018@DF_PRICES_C2018_ALL,1.0"
 
+# Ask each source for everything it has. Each currency's real floor is in `history_from` above; a
+# start earlier than the data simply returns the data.
+fetch_from:
+  oecd: "1950-01"
+  fred: "1900-01-01"
+
+# A currency's index is STALE if its latest month is older than this many days. The refresh job
+# flags it; the engine refuses to value a filer in a stale currency (see the proposal, section 5).
 stale_after_days: 120

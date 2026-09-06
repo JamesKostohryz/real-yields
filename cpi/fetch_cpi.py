@@ -59,7 +59,7 @@ def _get(url, tries=3, timeout=60):
     raise CPIError(f"unreachable after {tries} tries: {url.split('?')[0]} :: {last}")
 
 
-def fetch_oecd(iso3, flow, start="1990-01"):
+def fetch_oecd(iso3, flow, start="1950-01"):
     """{'YYYY-MM': index} from the OECD's own SDMX interface. The response is 'AllDimensions'
     flat: observation keys are colon-joined dimension positions whose LAST element indexes the
     TIME_PERIOD value list, and the period list is NOT in chronological order -- it must be read
@@ -80,7 +80,7 @@ def fetch_oecd(iso3, flow, start="1990-01"):
     return out
 
 
-def fetch_fred(sid, start="1990-01-01"):
+def fetch_fred(sid, start="1900-01-01"):
     """{'YYYY-MM': index}. Uses the AUTHENTICATED API when FRED_API_KEY is present -- the
     unauthenticated graph endpoint is not reachable from this project's CI runners, which cost
     three YMM valuations on 2026-09-05 before it was found."""
@@ -105,16 +105,40 @@ def fetch_fred(sid, start="1990-01-01"):
 def build(reg):
     """Fetch every registered currency. Returns {ccy: {'YYYY-MM': index}}."""
     monthly = {}
+    short = []
+    starts = reg.get("fetch_from") or {}
     for ccy, c in sorted(reg["currencies"].items()):
         src = c["source"]
         if src == "oecd":
-            monthly[ccy] = fetch_oecd(c["series"], reg["oecd_flows"][c["flow"]])
+            monthly[ccy] = fetch_oecd(c["series"], reg["oecd_flows"][c["flow"]],
+                                      start=starts.get("oecd", "1950-01"))
         elif src == "fred":
-            monthly[ccy] = fetch_fred(c["series"])
+            monthly[ccy] = fetch_fred(c["series"], start=starts.get("fred", "1900-01-01"))
         else:
             raise CPIError(f"{ccy}: unknown source {src!r} (expected 'oecd' or 'fred')")
+        first, last = min(monthly[ccy]), max(monthly[ccy])
         print(f"  {ccy}  {src:<5} {c['series']:<22} {c.get('flow',''):<6} "
-              f"{len(monthly[ccy]):>4} months  latest {max(monthly[ccy])}")
+              f"{len(monthly[ccy]):>5} months  {first} -> {last}")
+
+        # COVERAGE GUARD. registry.history_from records what each source actually returned when it
+        # was probed. A series that silently SHORTENS -- a rebasing that drops back history, a
+        # dataflow migration, a provider trimming its archive -- would otherwise arrive as a hole
+        # in the deflator table for the earliest statement years and nothing would fail. That is
+        # failure mode A: the workbook ties, on a history that quietly lost its front end. So the
+        # expectation is declared and checked, and a shortfall is loud.
+        expect = c.get("history_from")
+        if expect:
+            if first > expect:
+                short.append(f"{ccy}: expected history from {expect}, got {first}")
+            elif first < expect:
+                # LONGER than declared is good news, not an error -- but it must not pass silently,
+                # or `history_from` rots into a number nobody trusts.
+                print(f"  {ccy}  NOTE: history now reaches {first}, earlier than the declared "
+                      f"{expect}. Update registry.history_from.")
+    if short:
+        raise CPIError("consumer price history has SHORTENED against the registry -- refusing to "
+                       "publish a feed whose early years have quietly gone missing: "
+                       + "; ".join(short))
     return monthly
 
 
@@ -147,13 +171,21 @@ def main():
         w = csv.writer(fh); w.writerow(["currency", "month", "index"])
         for ccy in sorted(monthly):
             for ym in sorted(monthly[ccy]):
-                w.writerow([ccy, ym, f"{monthly[ccy][ym]:.6f}"])
+                # %.10g, NOT %.6f. Brazil's index spans roughly twelve orders of magnitude across
+                # the hyperinflation and six currency reforms: at six FIXED decimals, 99 monthly and
+                # 9 annual Brazilian values were written as exactly 0.000000 and every year before
+                # 1993 lost most of its significant digits. A zero in a deflator is not a small
+                # number, it is a division by zero. Significant digits, not decimal places -- the
+                # same format the exchange-rate feed uses. Found 2026-09-06 by cross-checking the
+                # newly extended deep history against the World Bank, which divided by zero.
+                w.writerow([ccy, ym, f"{monthly[ccy][ym]:.10g}"])
 
     rows = [["currency", "year", "index", "n_months"]]
     for ccy in sorted(ann):
         for y in sorted(ann[ccy]):
             m, n = ann[ccy][y]
-            rows.append([ccy, y, f"{m:.6f}", n])
+            rows.append([ccy, y, f"{m:.10g}", n])   # see the note on %.10g above
+
     for path in (os.path.join(OUT, "cpi_annual.csv"),
                  os.path.join(HIST, f"cpi_annual_{today.isoformat()}.csv")):
         with open(path, "w", newline="") as fh:
@@ -162,8 +194,9 @@ def main():
     stale = []
     with open(os.path.join(OUT, "cpi_provenance.csv"), "w", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(["currency", "source", "series", "base_period", "verified", "last_month",
-                    "age_days", "stale", "n_months_current_year", "fetched_utc"])
+        w.writerow(["currency", "source", "series", "base_period", "verified",
+                    "first_month", "history_from_declared", "n_months_total",
+                    "last_month", "age_days", "stale", "n_months_current_year", "fetched_utc"])
         for ccy in sorted(monthly):
             c = reg["currencies"][ccy]
             last = max(monthly[ccy])
@@ -175,7 +208,9 @@ def main():
             if is_stale:
                 stale.append(f"{ccy} ({last}, {age}d)")
             w.writerow([ccy, c["source"], c["series"], c["base_period"],
-                        str(bool(c.get("verified"))).lower(), last, age,
+                        str(bool(c.get("verified"))).lower(),
+                        min(monthly[ccy]), c.get("history_from", ""), len(monthly[ccy]),
+                        last, age,
                         str(is_stale).lower(), ann[ccy][today.year][1] if today.year in ann[ccy] else 0,
                         dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")])
 

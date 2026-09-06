@@ -1,0 +1,7 @@
+currency,daily_series,monthly_series,direction,verified,first_month,history_from_declared,n_monthly,n_daily,last_daily,age_days,stale,fetched_utc
+BRL,DEXBZUS,EXBZUS,foreign_per_usd,false,1995-01,1995-01,380,7940,2026-08-28,9,false,2026-09-06T23:00:49Z
+CNY,DEXCHUS,EXCHUS,foreign_per_usd,true,1981-01,1981-01,548,11397,2026-08-28,9,false,2026-09-06T23:00:49Z
+EUR,DEXUSEU,EXUSEU,usd_per_foreign,false,1999-01,1999-01,332,6936,2026-08-28,9,false,2026-09-06T23:00:49Z
+JPY,DEXJPUS,EXJPUS,foreign_per_usd,false,1971-01,1971-01,668,13951,2026-08-28,9,false,2026-09-06T23:00:49Z
+MXN,DEXMXUS,EXMXUS,foreign_per_usd,false,1993-11,1993-11,394,8225,2026-08-28,9,false,2026-09-06T23:00:49Z
+USD,identity,identity,identity,true,1971-01,,668,13955,2026-08-28,9,false,2026-09-06T23:00:49Z

@@ -1,0 +1,75 @@
+name: fx-refresh (foreign-filer exchange-rate feed)
+
+# WHY THIS EXISTS SEPARATELY FROM cpi-refresh. The two feeds answer to different clocks and fail for
+# different reasons. Consumer price indices publish monthly on national statistical calendars and are
+# tolerated to 120 days; exchange rates publish every business day and are tolerated to 21, because a
+# gap longer than that means the fetch is broken rather than the agency being slow. Folding them into
+# one job would make either failure look like the other, and would take the whole feed down when one
+# provider had an outage. Separate lanes, separate red checks.
+#
+# WHY A COMMITTED FEED AT ALL, when aeg-valuation/fx_rates.py already fetches FRED live. Because that
+# is the reproducibility hole the consumer price feed was built to close. A valuation is point in time
+# (standing rule 11 and standing rule 3) and must reproduce years later; it cannot if the exchange
+# rate underneath it is refetched on every run. Nothing would fail -- the number would simply be
+# different. So every run writes an immutable dated vintage into outputs/fx_history/ and a valuation
+# records which one it stood on.
+#
+# WHY THE HISTORY AND NOT JUST A SPOT RATE. market_data.apply_market_data() writes a HISTORICAL
+# year-end price series into the workbook, and Econ Statements row 95 divides reported common equity
+# by market capitalization off it, year by year. For a foreign filer those two are in different
+# currencies once the statements stop being converted to dollars, and a book-to-market ratio has no
+# scale any gate can check. Traced cell by cell in
+# AEG-Project/docs/engine/SPEC-Foreign-Filer-Data-Requirements-2026-09-06.md section 2.
+on:
+  schedule:
+    - cron: "30 6 * * 1"         # Mondays 06:30 UTC, half an hour after cpi-refresh
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fx-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install pyyaml
+      - name: Fetch exchange rates
+        env:
+          # The authenticated FRED API is the reliable path from a runner; the keyless graph endpoint
+          # is throttled for cloud IPs and cost three YMM valuations on 2026-09-05 before it was
+          # found. fetch_fx falls back to the keyless path if this is unset, so a missing secret
+          # degrades rather than breaks -- but it should be set.
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: python fx/fetch_fx.py
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### FX feed"
+            echo ""
+            echo '```'
+            cat outputs/fx_provenance.csv 2>/dev/null || echo "no provenance written"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Commit
+        run: |
+          set -euo pipefail
+          git config user.name  "aeg-fx[bot]"
+          git config user.email "aeg-fx@users.noreply.github.com"
+          git add outputs/fx_monthly.csv outputs/fx_daily.csv outputs/fx_provenance.csv outputs/fx_history/
+          if git diff --cached --quiet; then
+            echo "no change in the exchange-rate feed"
+          else
+            git commit -m "fx: refresh the foreign-filer exchange-rate feed $(date -u +%F)"
+            git pull --rebase --autostash origin "$(git rev-parse --abbrev-ref HEAD)" || true
+            git push
+          fi

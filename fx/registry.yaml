@@ -1,0 +1,137 @@
+# FX REGISTRY — one entry per currency the engine can translate, and the committed history behind it.
+#
+# WHY THIS FILE EXISTS, AND IT IS NOT THE REASON THE SPECS GAVE.
+#
+# Standing rule 11 says a foreign filer is valued in its own currency and that currency enters the
+# valuation exactly once, at the final translation of value per share. That is true of the DISCOUNTED
+# STREAM, and it is why the statements must stop being converted to dollars.
+#
+# But the engine does something else besides discount a stream. `market_data.apply_market_data()`
+# writes a HISTORICAL year-end price series into the workbook -- `md_yeprice` ('Market Data'!B16:AP16)
+# and `md_yeprice_adj` (row 17), one price at each fiscal year-end across the whole filing history --
+# and `Econ Statements` row 95 then computes BOOK OVER MARKET as reported common equity divided by
+# market capitalization, year by year. Equity comes from the statements; market cap comes from the
+# vendor's quoted price. For a foreign filer those are two different currencies, and row 96 carries
+# the error into row 98, the annual premium reserve, which is a REAL quantity inside the economic
+# restatement.
+#
+# For a depositary receipt the mismatch is not marginal. Full Truck Alliance files in renminbi and is
+# quoted in dollars per depositary share at twenty ordinary shares to one, so book over market would
+# be wrong by roughly a factor of one hundred and forty. It works today only by accident, because the
+# statements are currently converted to dollars and the depositary ratio is masked by the vendor also
+# reporting a depositary-share-equivalent count. THE MOMENT THE STATEMENTS STAY IN RENMINBI -- which
+# is the entire point of the foreign-filer work -- THAT ROW BREAKS, AND IT BREAKS SILENTLY, because a
+# book-to-market ratio has no scale any gate can check.
+#
+# So the requirement is an FX HISTORY, one observation per fiscal year-end date, not a single spot
+# rate. AEG-Project/docs/engine/SPEC-Foreign-Filer-Data-Requirements-2026-09-06.md section 2 traces
+# this cell by cell and corrects SPEC-Foreign-Filers-Real-Local-Currency-2026-09-05.md section 4.2(2)
+# and HANDOFF-Foreign-Filer-Build-2026-09-06.md objective 5, both of which say to reduce fx_rates.py
+# to a single spot lookup. Doing that would delete the capability this needs.
+#
+# WHY A COMMITTED FEED RATHER THAN JUST fx_rates.py. `aeg-valuation/fx_rates.py` fetches FRED live at
+# run time and caches in a working directory. That is the same reproducibility hole the consumer price
+# feed was built to close: a valuation is point in time (standing rule 3) and must reproduce years
+# later, and it cannot if the exchange rate underneath it is refetched on every run. Nothing would
+# fail; the number would simply be different. So every run writes a DATED IMMUTABLE VINTAGE and a
+# valuation records which one it stood on -- identical discipline to cpi_history/.
+#
+# THE CONVENTION, AND GETTING IT BACKWARDS IS THE WHOLE RISK HERE.
+#
+# Published values are always `usd_per_unit` -- US dollars per ONE unit of the foreign currency.
+# That is deliberately the same normalization `aeg-valuation/fx_rates.py` exposes through
+# `usd_per_unit_spot()` / `usd_per_unit_avg()`, so this feed and that module can never disagree about
+# direction. FRED itself quotes most pairs the other way round (foreign units per dollar), so most
+# entries below carry `direction: foreign_per_usd` and are INVERTED on the way out; the euro-family
+# series are already dollars per unit and are not. A wrong direction here is a clean factor-of-fifty
+# error with no symptom, so every entry must be checked against FRED's own series page before use and
+# marked untested until a real filer confirms it. DO NOT GUESS A SERIES ID.
+#
+# SERIES PAIRS. FRED publishes each Federal Reserve H.10 pair twice: a DAILY series (DEX*) and the
+# Board's own MONTHLY AVERAGE of it (EX*). Both are carried, because they answer different questions:
+#   daily    -- the period-END spot rate at a fiscal year-end date (a balance-sheet, stock measure)
+#   monthly  -- the period-AVERAGE rate over a fiscal year (an income-statement, flow measure)
+# The two are cross-checked against each other on every run: the Board's monthly average must agree
+# with the mean of that month's daily observations. They are independently published, so a
+# disagreement means one of them is not what this file thinks it is.
+
+currencies:
+  USD:
+    identity: true
+    country: United States
+    verified: true
+    verified_note: >-
+      The dollar is carried as an explicit identity (usd_per_unit = 1.0 exactly, every month and
+      every day the other series cover) rather than special-cased away. That is on purpose: it makes
+      a domestic filer take the SAME code path as a foreign one, so the guard that routes a USD
+      filer past the FX translation is exercised by the feed itself instead of being a branch nobody
+      tests. Same reasoning as the CPI registry carrying USD.
+  CNY:
+    daily: DEXCHUS
+    monthly: EXCHUS
+    direction: foreign_per_usd
+    country: China
+    history_from: "1981-01"
+    verified: true
+    verified_note: >-
+      Quote direction VERIFIED against YMM on 2026-09-04 (see fx_rates.REGISTRY, which carries the
+      same series and direction). Renminbi per dollar, inverted on publication. History from 1981-01
+      comfortably covers any Chinese filing history the consumer price index can reach (1993-01).
+  JPY:
+    daily: DEXJPUS
+    monthly: EXJPUS
+    direction: foreign_per_usd
+    country: Japan
+    history_from: "1971-01"
+    verified: false
+    verified_note: "Yen per dollar, inverted on publication. Direction matches fx_rates.REGISTRY. Untested against a filing."
+  EUR:
+    daily: DEXUSEU
+    monthly: EXUSEU
+    direction: usd_per_foreign
+    country: Euro area
+    history_from: "1999-01"
+    verified: false
+    verified_note: >-
+      INVERTED RELATIVE TO THE OTHERS: FRED quotes dollars per euro, which is already the published
+      convention, so this one is NOT inverted. Starts 1999-01 because the euro did not exist before
+      then -- a European filer with pre-1999 statements needs legacy national currencies and a
+      redenomination joint, which is a ruling, not a fetch. Untested against a filing.
+  BRL:
+    daily: DEXBZUS
+    monthly: EXBZUS
+    direction: foreign_per_usd
+    country: Brazil
+    history_from: "1995-01"
+    verified: false
+    verified_note: >-
+      Real per dollar, inverted on publication. Starts 1995-01, which is the REAL's own start (the
+      Plano Real, July 1994) -- note this is FOURTEEN YEARS SHORTER than the Brazilian consumer price
+      index in the CPI registry, which reaches 1979-12 through six currency reforms. A Brazilian
+      filer with statements before 1995 has an inflation series and no exchange rate. Untested.
+  MXN:
+    daily: DEXMXUS
+    monthly: EXMXUS
+    direction: foreign_per_usd
+    country: Mexico
+    history_from: "1993-11"
+    verified: false
+    verified_note: >-
+      Peso per dollar, inverted on publication. Starts 1993-11, at the nuevo peso redenomination
+      (1000:1) -- the Mexican consumer price index reaches 1969-01, so the same gap as Brazil's
+      applies, twenty-four years of it. Untested against a filing.
+
+# Ask FRED for everything it has. Each currency's real floor is in `history_from`; a start earlier
+# than the data simply returns the data.
+fetch_from: "1900-01-01"
+
+# A currency's rate is STALE if its latest observation is older than this many days. Tighter than the
+# consumer price feed's 120 days on purpose: exchange rates are published every business day, so a
+# gap of more than a couple of weeks means the fetch is broken, not that the agency is slow.
+stale_after_days: 21
+
+# The Board's monthly average must agree with the mean of that month's daily prints to within this
+# relative tolerance. They are independently published series; a disagreement means one of them is
+# not what this file thinks it is -- most likely a direction error or a swapped series id, which is
+# exactly the failure that has no other symptom.
+monthly_vs_daily_tolerance: 0.005
