@@ -1,0 +1,7 @@
+currency,source,series,base_period,verified,last_month,age_days,stale,n_months_current_year,fetched_utc
+BRL,oecd,BRA,2015,false,2026-07,37,false,7,2026-09-06T18:59:38Z
+CNY,oecd,CHN,2015,false,2026-07,37,false,7,2026-09-06T18:59:38Z
+EUR,fred,CP0000EZ19M086NEST,2015,false,2026-07,37,false,7,2026-09-06T18:59:38Z
+JPY,oecd,JPN,2015,false,2026-07,37,false,7,2026-09-06T18:59:38Z
+MXN,oecd,MEX,2015,false,2026-07,37,false,7,2026-09-06T18:59:38Z
+USD,fred,CPIAUCSL,1982-1984,true,2026-07,37,false,7,2026-09-06T18:59:38Z
