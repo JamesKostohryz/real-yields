@@ -78,12 +78,26 @@ currencies:
     base_period: "2015"
     country: China
     history_from: "1993-01"
-    verified: false
+    verified: true
     verified_note: >-
-      Current to 2026-07 as at 2026-09-06. Reconcile against YMM's 20-F before use. 1993-01 IS THE
-      FLOOR AND IT IS THE DATA, NOT THE INTERMEDIARY: the OECD's own interface and FRED's mirror
-      (CHNCPIALLMINMEI) both begin 1993-01, checked separately. World Bank FP.CPI.TOTL has China
-      annually from 1986 and is NOT spliced in -- see the note under `annual_backfill` below.
+      VERIFIED 2026-09-06 against Full Truck Alliance (YMM), the first non-USD filer this system has
+      valued. Four checks, all recorded in
+      AEG-Project/docs/engine/VERIFICATION-Yuan-Deflator-Against-YMM-2026-09-06.md.
+      (1) Year-over-year inflation agrees with World Bank FP.CPI.TOTL to 0.0000 percentage points in
+      EVERY ONE of YMM's seven filing years, 2019 through 2025 -- not close, identical to four
+      decimal places. (2) The base constant written into the workbook is the 2026 calendar-year mean
+      of the months published, 116.2597, giving a 2025 deflator of 1.007629, a +0.763% price change
+      into the base year, which is consistent with China's near-zero measured CPI. (3) YMM's revenue
+      as filed in renminbi, 2019-2025, was deflated BY HAND to 2026 yuan and the identity
+      (1+real)(1+inflation) = (1+nominal) holds to 2.2e-14 percentage points. (4) The old path was
+      reproduced for comparison -- convert each year's renminbi at that year's average exchange rate,
+      then deflate by US CPI -- and it gives a real revenue CAGR of 25.207% against 29.717% on this
+      series: A DIFFERENCE OF 4.511 PERCENTAGE POINTS A YEAR of real growth, which is defect F2
+      measured on a real filing rather than argued. 1993-01 IS THE FLOOR AND IT IS THE DATA, NOT THE
+      INTERMEDIARY: the OECD's own interface and FRED's mirror (CHNCPIALLMINMEI) both begin 1993-01,
+      checked separately. World Bank FP.CPI.TOTL has China annually from 1986 and is NOT spliced in
+      -- see the note under `annual_backfill` below. YMM's own filings begin 2019, so the floor does
+      not bind for this company.
   JPY:
     source: oecd
     series: JPN
