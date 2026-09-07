@@ -7,16 +7,6 @@ on:
         description: "Ticker (leave blank to use the TICKER cell in the Cockpit sheet)"
         required: false
         default: ""
-      obs_category:
-        description: "Obsolescence durability (A=durable, B=moderate, C=exposed). KEEP means: reuse what run_stamp_<T>.csv already records for this ticker."
-        required: false
-        type: choice
-        default: "KEEP"
-        options: ["KEEP", "A", "B", "C"]
-      ory_override:
-        description: "Obsolescence Risk Year override (optional; blank = use the category default)"
-        required: false
-        default: ""
 
 permissions:
   contents: write
@@ -64,44 +54,29 @@ jobs:
           TICKER: "${{ github.event.inputs.ticker }}"
         run: python refresh_bonds.py
 
-      # KEEP reuses the durability judgment already recorded for this ticker instead of
-      # re-deciding it. Added 2026-08-20 so a SCHEDULED refresh is possible at all: re-running
-      # a company on the default "B" would silently overwrite an A or a C with no diff to see,
-      # and the category lands in coe_v2_<T>_latest_annual.csv, which is the cost-of-equity
-      # curve the AEG engine discounts with. A ticker with no recorded category and no explicit
-      # choice falls back to B exactly as before -- that is the pre-existing default, made
-      # visible rather than changed.
-      - name: Resolve the durability category
-        id: obs
-        env:
-          TICKER: "${{ github.event.inputs.ticker }}"
-          REQUESTED: "${{ github.event.inputs.obs_category }}"
-        run: |
-          set -euo pipefail
-          T=$(echo "${TICKER}" | tr '[:lower:]' '[:upper:]')
-          CAT="${REQUESTED:-KEEP}"
-          ORY=""
-          if [ "$CAT" = "KEEP" ] || [ -z "$CAT" ]; then
-            STAMP="outputs/run_stamp_${T}.csv"
-            if [ -f "$STAMP" ]; then
-              CAT=$(awk -F, '$1=="obs_category"{print $2}' "$STAMP" | tr -d '\r' | head -1)
-              ORY=$(awk -F, '$1=="ory_override"{print $2}' "$STAMP" | tr -d '\r' | head -1)
-            fi
-            if [ -z "$CAT" ]; then
-              CAT="B"
-              echo "::notice::${T} has no recorded durability category; using the standing default B. Dispatch this workflow once with A, B or C explicitly to record the judgment."
-            else
-              echo "::notice::${T} reusing recorded durability category ${CAT}${ORY:+ (ORY ${ORY})}"
-            fi
-          fi
-          echo "cat=$CAT" >> "$GITHUB_OUTPUT"
-          echo "ory=$ORY" >> "$GITHUB_OUTPUT"
+      # THE DURABILITY LETTER IS NO LONGER AN INPUT TO THIS WORKFLOW. Removed 2026-09-06.
+      #
+      # James has ruled it repeatedly and most recently that day: the obsolescence durability
+      # judgment is made by the FORECASTER during a forecasting round and reviewed by the
+      # analyst. It is not made before onboarding, not during onboarding, and not during set-up.
+      # A `KEEP` input that silently resolved to "B" for any ticker with no run_stamp was making
+      # that decision on nobody's authority, every time a new company was added.
+      #
+      # REMOVING IT CHANGES NO PUBLISHED NUMBER, and that is measured rather than hoped.
+      # OBS_CATEGORY reaches elevator.augment_coe, which folds the obsolescence premium into the
+      # `obsolescence`, `company_erp` and `real_coe` columns -- all three RETIRED 2026-09-02 and
+      # no longer written. coe_v2_<T>_latest_annual.csv, the only cost-of-equity file the AEG
+      # engine reads, carries `real_rf` and `market_erp` and nothing else; rate_feed.load_coe()
+      # takes exactly those two; augment_coe touches neither.
+      #
+      # asfp/run_company.py still builds an elevator internally at its own default so the code
+      # path stays alive for the day the engine consumes a curve that carries an obsolescence
+      # leg. What is gone is the QUESTION. run_stamp_<T>.csv records the category as
+      # "unset (forecaster's judgment)" so there is somewhere to put the letter when it is wired.
 
       - name: Pull company data
         env:
           TICKER: "${{ github.event.inputs.ticker }}"
-          OBS_CATEGORY: "${{ steps.obs.outputs.cat }}"
-          ORY_OVERRIDE: "${{ github.event.inputs.ory_override != '' && github.event.inputs.ory_override || steps.obs.outputs.ory }}"
         run: python -m asfp.run_company
 
       # Decision B (ERP 0700): the valuation basis is ERP's forward curve, not the

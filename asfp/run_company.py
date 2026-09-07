@@ -109,18 +109,26 @@ def main():
         {"field": "n_bonds", "value": 0 if bonds is None else len(bonds)},
         {"field": "run_id", "value": os.environ.get("GITHUB_RUN_ID", "local")},
         {"field": "git_sha", "value": os.environ.get("GITHUB_SHA", "")[:7]},
-        # THE DURABILITY JUDGMENT, RECORDED 2026-08-20. OBS_CATEGORY picks the obsolescence
-        # elevator preset and therefore lands directly in coe_v2_<T>_latest_annual.csv -- the
-        # cost-of-equity curve the AEG engine discounts with. It defaults to "B" and, until
-        # this line, was written down NOWHERE. Every company's published cost of equity
-        # embedded a durability judgment that could not be read back, compared, or reused.
+        # THE DURABILITY JUDGMENT. THE COMMENT THAT STOOD HERE WAS STALE AND IT COST REAL TIME.
         #
-        # It has to be readable for a scheduled refresh to exist at all: re-running a company
-        # without knowing its category would silently re-decide it, which is worse than not
-        # refreshing. aeg-valuation's rate-side refresh reads these two fields.
-        {"field": "obs_category",
-         "value": os.environ.get("OBS_CATEGORY", "B").strip().upper()[:1] or "B"},
-        {"field": "ory_override", "value": (os.environ.get("ORY_OVERRIDE") or "").strip()},
+        # It said OBS_CATEGORY "lands directly in coe_v2_<T>_latest_annual.csv -- the
+        # cost-of-equity curve the AEG engine discounts with." That was true when it was written
+        # on 2026-08-20. It has been FALSE since 2026-09-02, when `obsolescence`, `company_erp`
+        # and `real_coe` were retired from that file. What is published now is `real_rf` and
+        # `market_erp`, and elevator.augment_coe touches neither -- it folds the obsolescence
+        # premium into exactly the three retired columns. rate_feed.load_coe() reads the two
+        # published ones and nothing else.
+        #
+        # So the letter reaches NO field any valuation consumes, and a stale comment asserting
+        # otherwise sent two separate sessions chasing it as a first-order input.
+        #
+        # THE JUDGMENT ITSELF IS THE FORECASTER'S. Ruled repeatedly by James, most recently
+        # 2026-09-06: it is made during a forecasting round and reviewed by the analyst, never
+        # at onboarding. The workflow inputs were removed the same day. This field is kept so
+        # there is somewhere to record the letter on the day the engine consumes a curve that
+        # carries an obsolescence leg -- until then it says what it is.
+        {"field": "obs_category", "value": "unset (forecaster's judgment)"},
+        {"field": "obs_category_effective_in_published_curve", "value": "none"},
     ]
     pd.DataFrame(stamp).to_csv(f"{OUTDIR}/run_stamp_{ticker}.csv", index=False)
     written.append(f"run_stamp_{ticker}.csv")
@@ -153,9 +161,14 @@ def main():
                                         _iv["index_vol"].astype(float).tolist()))
             else:   # degraded fallback: flat 1y index vol from the front market ERP (spot approx)
                 index_vol_ts = [(1.0, float(np.sqrt(max(np.interp(1.0, GV, mkt2), 0.01) * 100.0)))]
-            category = os.environ.get("OBS_CATEGORY", "B").strip().upper()[:1] or "B"  # Phase 4: from sheet
-            ory_ov = os.environ.get("ORY_OVERRIDE")
-            ory_ov = float(ory_ov) if ory_ov else None
+            # INTERNAL PLACEHOLDER, NOT A JUDGMENT AND NOT AN INPUT. assemble_coe_v2 requires a
+            # category to build the elevator; the elevator's output lands only in the three
+            # columns retired on 2026-09-02 and reaches nothing this job publishes. It is fixed
+            # here rather than taken from the environment so that no caller can believe it is
+            # choosing something. The real letter is the forecaster's -- see the run_stamp note
+            # above and aeg-project docs/00-CURRENT/WORKFLOW-Setup-Phase-2026-09-06.md section 1.
+            category = "B"
+            ory_ov = None
             coe2 = trv.assemble_coe_v2(GV, rf2, mkt2, stock_vol_ts, index_vol_ts,
                                        meta["rating"], category, ory_override=ory_ov)
             coe2.round(4).to_csv(f"{OUTDIR}/coe_v2_{ticker}_latest.csv")
