@@ -1,0 +1,10 @@
+field,value
+ticker,ORCL
+generated_utc,2026-09-09 16:29 UTC
+generated_iso,2026-09-09T16:29:16Z
+bonds_source,committed-file
+n_bonds,14
+run_id,34376949081
+git_sha,2ffa833
+obs_category,unset (forecaster's judgment)
+obs_category_effective_in_published_curve,none
