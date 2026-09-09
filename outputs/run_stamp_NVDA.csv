@@ -1,0 +1,10 @@
+field,value
+ticker,NVDA
+generated_utc,2026-09-09 14:14 UTC
+generated_iso,2026-09-09T14:14:24Z
+bonds_source,none (pure-rating)
+n_bonds,0
+run_id,34362235687
+git_sha,a95b289
+obs_category,unset (forecaster's judgment)
+obs_category_effective_in_published_curve,none
