@@ -1,0 +1,15 @@
+field,value
+ticker,AMZN
+price,252.4
+market_equity,2722465545572.8003
+nfo,66177000000.0
+L,0.023730900937827776
+lambda0,0.024307745641672214
+market_value_of_debt,131610228481.31613
+portfolio_ytm,0.059111208070747656
+wavg_mod_duration,8.796971395837573
+wavg_coupon,0.041714013748386174
+wavg_years,14.145750910502747
+rating,BBB
+offset,0.584901270293993
+mvd_basis,book-scaled
