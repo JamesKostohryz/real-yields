@@ -1,10 +1,10 @@
 field,value
 ticker,AMZN
-generated_utc,2026-09-10 00:48 UTC
-generated_iso,2026-09-10T00:48:14Z
+generated_utc,2026-09-10 00:50 UTC
+generated_iso,2026-09-10T00:50:47Z
 bonds_source,committed-file
 n_bonds,6
-run_id,34422790527
-git_sha,129e6a5
+run_id,34422971200
+git_sha,0eac2dd
 obs_category,unset (forecaster's judgment)
 obs_category_effective_in_published_curve,none
