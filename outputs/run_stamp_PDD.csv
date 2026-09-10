@@ -1,0 +1,10 @@
+field,value
+ticker,PDD
+generated_utc,2026-09-10 02:24 UTC
+generated_iso,2026-09-10T02:24:42Z
+bonds_source,none (pure-rating)
+n_bonds,0
+run_id,34429294790
+git_sha,dabaf52
+obs_category,unset (forecaster's judgment)
+obs_category_effective_in_published_curve,none
