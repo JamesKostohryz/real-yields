@@ -1,0 +1,10 @@
+field,value
+ticker,BABA
+generated_utc,2026-09-10 01:44 UTC
+generated_iso,2026-09-10T01:44:45Z
+bonds_source,committed-file
+n_bonds,5
+run_id,34426651537
+git_sha,feb6ce5
+obs_category,unset (forecaster's judgment)
+obs_category_effective_in_published_curve,none
