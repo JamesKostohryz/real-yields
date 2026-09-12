@@ -1,0 +1,10 @@
+field,value
+ticker,MU
+generated_utc,2026-09-12 18:33 UTC
+generated_iso,2026-09-12T18:33:03Z
+bonds_source,none (pure-rating)
+n_bonds,0
+run_id,34711510436
+git_sha,d6c02cd
+obs_category,unset (forecaster's judgment)
+obs_category_effective_in_published_curve,none
