@@ -1,0 +1,10 @@
+field,value
+ticker,TOST
+generated_utc,2026-09-13 07:00 UTC
+generated_iso,2026-09-13T07:00:14Z
+bonds_source,none (pure-rating)
+n_bonds,0
+run_id,34744114812
+git_sha,36a8eec
+obs_category,unset (forecaster's judgment)
+obs_category_effective_in_published_curve,none
