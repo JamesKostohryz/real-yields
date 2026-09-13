@@ -1,0 +1,10 @@
+field,value
+ticker,NTES
+generated_utc,2026-09-13 06:43 UTC
+generated_iso,2026-09-13T06:43:00Z
+bonds_source,none (pure-rating)
+n_bonds,0
+run_id,34743410018
+git_sha,0495e87
+obs_category,unset (forecaster's judgment)
+obs_category_effective_in_published_curve,none
