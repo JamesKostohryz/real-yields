@@ -1,0 +1,10 @@
+field,value
+ticker,WEX
+generated_utc,2026-09-13 06:46 UTC
+generated_iso,2026-09-13T06:46:09Z
+bonds_source,none (pure-rating)
+n_bonds,0
+run_id,34743538621
+git_sha,566c3c0
+obs_category,unset (forecaster's judgment)
+obs_category_effective_in_published_curve,none
