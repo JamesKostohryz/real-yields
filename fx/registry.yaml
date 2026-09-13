@@ -120,6 +120,49 @@ currencies:
       Peso per dollar, inverted on publication. Starts 1993-11, at the nuevo peso redenomination
       (1000:1) -- the Mexican consumer price index reaches 1969-01, so the same gap as Brazil's
       applies, twenty-four years of it. Untested against a filing.
+  HKD:
+    daily: DEXHKUS
+    monthly: EXHKUS
+    direction: foreign_per_usd
+    country: Hong Kong
+    history_from: "1981-01"
+    verified: false
+    verified_note: >-
+      Hong Kong dollars per US dollar, inverted on publication. Direction matches
+      fx_rates.REGISTRY and was CHECKED AGAINST THE DATA rather than the series name: the last
+      observation on 2026-09-04 is 7.8407, which is the peg band (7.75-7.85) read as HKD per USD,
+      not USD per HKD. Probed 2026-09-13: DEXHKUS returns 11,462 daily observations from
+      1981-01-02, EXHKUS 548 monthly from 1981-01, and the Board's monthly average agrees with the
+      mean of that month's daily prints to a worst relative gap of 6e-06 over the last 36 months,
+      against this file's 0.005 tolerance. ADDED FOR THE HONG KONG PRIMARY LISTINGS (James's
+      ruling, 2026-09-13: value every non-US company off its home line, translating price, Neutral
+      Value and intrinsic value into USD only at the end). Those six companies FILE IN RENMINBI,
+      so this entry is needed for the price side alone -- the deflator is CNY's, which is already
+      verified against YMM. NOT yet reconciled against a filing: the direction is confirmed but no
+      valuation has been built on it, so the first Hong Kong name run must check the localized
+      price against the quoted price by hand before anything is quoted.
+  GBP:
+    daily: DEXUSUK
+    monthly: EXUSUK
+    direction: usd_per_foreign
+    country: United Kingdom
+    history_from: "1971-01"
+    verified: false
+    verified_note: >-
+      INVERTED RELATIVE TO MOST OF THIS FILE, like EUR: FRED quotes US dollars per pound, which is
+      already the published convention, so this one is NOT inverted on the way out. Checked against
+      the data rather than the series name: the last observation on 2026-09-04 is 1.3521, which is
+      dollars per pound, not pounds per dollar. Probed 2026-09-13: DEXUSUK returns 13,962 daily
+      observations from 1971-01-04, EXUSUK 668 monthly from 1971-01, and the Board's monthly
+      average agrees with the mean of that month's daily prints to a worst relative gap of 3.6e-05
+      over the last 36 months, against this file's 0.005 tolerance. TWO THINGS THIS ENTRY DOES NOT
+      DO. It does not make a British filer valuable: GBP has no entry in cpi/registry.yaml, and
+      without its own price index a GBP filer cannot be deflated under standing rule 11. And the
+      London Stock Exchange quotes in GBX (PENCE), not pounds -- applying a GBP rate to a GBX price
+      is a clean factor of 100 with no symptom anywhere in the engine, which is the failure class
+      this file's header exists for. Settle the GBX handling explicitly before the first British
+      name. Aviva additionally files back to 1985-12-31, which reaches past the ONS consumer price
+      series a GBP CPI entry would rest on; that is a ruling about the window, not a fetch.
 
 # Ask FRED for everything it has. Each currency's real floor is in `history_from`; a start earlier
 # than the data simply returns the data.
