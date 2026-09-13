@@ -1,0 +1,10 @@
+field,value
+ticker,FOUR
+generated_utc,2026-09-13 06:54 UTC
+generated_iso,2026-09-13T06:54:26Z
+bonds_source,none (pure-rating)
+n_bonds,0
+run_id,34743882631
+git_sha,7d22f57
+obs_category,unset (forecaster's judgment)
+obs_category_effective_in_published_curve,none
