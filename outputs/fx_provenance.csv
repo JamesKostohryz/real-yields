@@ -1,7 +1,9 @@
 currency,daily_series,monthly_series,direction,verified,first_month,history_from_declared,n_monthly,n_daily,last_daily,age_days,stale,fetched_utc
-BRL,DEXBZUS,EXBZUS,foreign_per_usd,false,1995-01,1995-01,380,7940,2026-08-28,10,false,2026-09-07T12:57:03Z
-CNY,DEXCHUS,EXCHUS,foreign_per_usd,true,1981-01,1981-01,548,11397,2026-08-28,10,false,2026-09-07T12:57:03Z
-EUR,DEXUSEU,EXUSEU,usd_per_foreign,false,1999-01,1999-01,332,6936,2026-08-28,10,false,2026-09-07T12:57:03Z
-JPY,DEXJPUS,EXJPUS,foreign_per_usd,false,1971-01,1971-01,668,13951,2026-08-28,10,false,2026-09-07T12:57:03Z
-MXN,DEXMXUS,EXMXUS,foreign_per_usd,false,1993-11,1993-11,394,8225,2026-08-28,10,false,2026-09-07T12:57:03Z
-USD,identity,identity,identity,true,1971-01,,668,13955,2026-08-28,10,false,2026-09-07T12:57:03Z
+BRL,DEXBZUS,EXBZUS,foreign_per_usd,false,1995-01,1995-01,380,7945,2026-09-04,9,false,2026-09-13T06:16:15Z
+CNY,DEXCHUS,EXCHUS,foreign_per_usd,true,1981-01,1981-01,548,11402,2026-09-04,9,false,2026-09-13T06:16:15Z
+EUR,DEXUSEU,EXUSEU,usd_per_foreign,false,1999-01,1999-01,332,6941,2026-09-04,9,false,2026-09-13T06:16:15Z
+GBP,DEXUSUK,EXUSUK,usd_per_foreign,false,1971-01,1971-01,668,13962,2026-09-04,9,false,2026-09-13T06:16:15Z
+HKD,DEXHKUS,EXHKUS,foreign_per_usd,false,1981-01,1981-01,548,11462,2026-09-04,9,false,2026-09-13T06:16:15Z
+JPY,DEXJPUS,EXJPUS,foreign_per_usd,false,1971-01,1971-01,668,13956,2026-09-04,9,false,2026-09-13T06:16:15Z
+MXN,DEXMXUS,EXMXUS,foreign_per_usd,false,1993-11,1993-11,394,8230,2026-09-04,9,false,2026-09-13T06:16:15Z
+USD,identity,identity,identity,true,1971-01,,668,13966,2026-09-04,9,false,2026-09-13T06:16:15Z
