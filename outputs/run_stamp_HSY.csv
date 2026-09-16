@@ -1,0 +1,10 @@
+field,value
+ticker,HSY
+generated_utc,2026-09-16 07:17 UTC
+generated_iso,2026-09-16T07:17:47Z
+bonds_source,committed-file
+n_bonds,13
+run_id,35067753234
+git_sha,3c2d9ba
+obs_category,unset (forecaster's judgment)
+obs_category_effective_in_published_curve,none
