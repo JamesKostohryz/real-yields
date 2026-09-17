@@ -217,13 +217,15 @@ def test_an_out_of_band_input_is_refused(repo):
     prior = json.load(open(os.path.join(repo, "ERP_HELD_STATE_2026-06.json")))
     with pytest.raises(RA.ReanchorRefused):
         RA.apply_guards(dict(vs_1y=9.9, corp_prem=1.0, breakeven1y=2.0, cost=0.5,
-                             fey_in=6.0, D_in=25.0), prior, log=lambda *_: None)
+                             fey_in=6.0, D_in=25.0, bbb_spread_30y=1.225),
+                        prior, log=lambda *_: None)
 
 
 def test_a_big_but_plausible_move_is_amber_not_red(repo):
     prior = json.load(open(os.path.join(repo, "ERP_HELD_STATE_2026-06.json")))
     amber = RA.apply_guards(dict(vs_1y=0.9348, corp_prem=3.5, breakeven1y=2.76, cost=0.5,
-                                 fey_in=6.02, D_in=24.72), prior, log=lambda *_: None)
+                                 fey_in=6.02, D_in=24.72, bbb_spread_30y=prior["bbb_spread_30y"]),
+                            prior, log=lambda *_: None)
     assert len(amber) == 1 and "corp_prem" in amber[0]
 
 
@@ -235,7 +237,18 @@ def test_a_big_but_plausible_move_is_amber_not_red(repo):
 # weight sits where they have already been blended out. They are listed here with the measured
 # sensitivity beside them so that if the presets ever change, this exemption becomes a visible
 # lie a reader can catch rather than an omission nobody can see.
-KNOWN_LOW_INFLUENCE = {"normalized_X4": 4.4, "cpi_factor": 2.2}   # bp per 10% / 5% bump
+#
+# D_in JOINED THEM ON 2026-09-16, and the cause is measured rather than assumed. The
+# credit-anchored plateau raised preset B from 2.40 to BBB + 2.00 = 3.225, which puts the
+# plateau much nearer the per-tenor base values the duration weights are weighting BETWEEN.
+# With less spread across the curve to weight, the duration collapse has less to do. Measured
+# on the 2026-09-16 curve, a +5% bump in D_in:
+#     plateau 2.40  ->  1.8779 bp of eff_coe        (what the 1.0bp floor was calibrated on)
+#     plateau 3.225 ->  0.5197 bp of eff_coe
+# D_in is therefore still wired and still moves the published number; it moves it less, and
+# how much less is a function of where the plateau sits. If the plateau ever falls back toward
+# the base values this exemption should come off again.
+KNOWN_LOW_INFLUENCE = {"normalized_X4": 4.4, "cpi_factor": 2.2, "D_in": 0.36}  # bp per bump
 
 
 def test_no_input_is_inert(repo):
@@ -246,7 +259,8 @@ def test_no_input_is_inert(repo):
     def coe(state):
         real, ney = RR.construct_legs(state, reals, nom, sp)
         return BED.build_asof(real, ney, state["vs"], state["fey_in"], state["D_in"],
-                              state["cost"], state["corp_prem"])["eff_coe"]
+                              state["cost"], state["corp_prem"],
+                              bbb_spread_30y=RR.credit_anchor(state))["eff_coe"]
 
     b = coe(base)
     bumps = [("vs", 1.10), ("fey_in", 1.05), ("D_in", 1.05), ("cost", 1.20),
@@ -255,7 +269,12 @@ def test_no_input_is_inert(repo):
         s = json.loads(json.dumps(base))
         s[key] = [x * mult for x in s[key]] if isinstance(s[key], list) else s[key] * mult
         moved_bp = abs(coe(s) - b) * 100
-        floor_bp = 0.5 if key in KNOWN_LOW_INFLUENCE else 1.0
+        # An exempted input is held to HALF ITS OWN RECORDED SENSITIVITY rather than to a flat
+        # 0.5bp. Tightened 2026-09-16, when D_in joined the list: a flat floor well below every
+        # recorded value lets an exempted input decay most of the way to inert without failing,
+        # which is the thing this test exists to prevent. Half the record still allows honest
+        # drift with the market and fails on a wiring break or a silent methodology shift.
+        floor_bp = 0.5 * KNOWN_LOW_INFLUENCE[key] if key in KNOWN_LOW_INFLUENCE else 1.0
         assert moved_bp > floor_bp, (
             f"{key} moved the published eff_coe by only {moved_bp:.4f}bp — it is inert or "
             f"near-inert. Either it is not wired, or it belongs in KNOWN_LOW_INFLUENCE with "
@@ -273,7 +292,8 @@ def test_corp_prem_is_a_floor_so_it_only_bites_when_it_binds(repo):
     def coe(cp):
         s = dict(base, corp_prem=cp)
         real, ney = RR.construct_legs(s, reals, nom, sp)
-        return BED.build_asof(real, ney, s["vs"], s["fey_in"], s["D_in"], s["cost"], cp)["eff_coe"]
+        return BED.build_asof(real, ney, s["vs"], s["fey_in"], s["D_in"], s["cost"], cp,
+                              bbb_spread_30y=RR.credit_anchor(s))["eff_coe"]
 
     assert coe(1.04) == pytest.approx(coe(1.50), abs=1e-9), "the floor should not bind today"
     assert coe(6.00) > coe(1.04) + 0.5, "the floor must bite once it is raised above the ERP"

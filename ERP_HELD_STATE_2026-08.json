@@ -77,6 +77,9 @@
     },
     "amber": [
       "breakeven1y 2.0783 comes from a front-CONSTRUCTED curve point (reliability 0.0): no TIPS matures inside a year, so the 1-year real yield is extrapolated. Bounded -- ~4.6bp of eff_coe per 68bp."
-    ]
-  }
+    ],
+    "bbb_spread_30y": "back-filled repro fixture; see bbb_spread_30y_note"
+  },
+  "bbb_spread_30y": 0.4,
+  "bbb_spread_30y_note": "REPRODUCTION FIXTURE, NOT A MARKET READING. This vintage was published before 2026-09-16, when the market-ERP plateau became BBB-30y + a risk add-on. 0.40 is the spread that reproduces this vintage's ACTUAL published preset-B plateau of 2.40 through the new rule (0.40 + PLATEAU_ADDONS['B'] 2.00), so every committed curve and regression reference from this vintage still reproduces bit-for-bit. Never quote it as a credit spread."
 }

@@ -135,7 +135,37 @@ def fetch_cme_settlement_vols(disc_rate_pct=4.5, timeout=20, log=print):
         return []
 
 
-def floor_from_credit_grid(cg, wedge=1.0, lgd=0.60, hazard=0.30, liquidity=0.30, tenor=30.0):
+# ---------------------------------------------------------------------------------------------
+# THE CREDIT->RISK NETTING PARAMETERS LIVE HERE AND NOWHERE ELSE.
+#
+# Promoted from default arguments to module constants on 2026-09-16, when
+# `build_erp_daily` began anchoring the market-ERP plateau to the same credit grid. Two
+# copies of 0.18/0.30 in two files is the drift this project spent 2026-08-31 fixing, so
+# `build_erp_daily` imports THESE OBJECTS and `tests/test_plateau_credit_anchor.py` asserts
+# the sharing by identity rather than by value -- a value check passes just as happily on a
+# second copy that has not been edited yet.
+LGD = 0.60          # loss given default
+HAZARD = 0.30       # annual hazard rate; LGD x HAZARD = 0.18 = expected loss
+LIQUIDITY = 0.30    # liquidity haircut
+
+
+def credit_spread(cg, rating="BBB", tenor=30.0):
+    """A rating's credit spread (%) at `tenor`, AS PUBLISHED -- no netting of expected loss
+    and no liquidity haircut.
+
+    This is the market-ERP plateau's anchor (James, 2026-09-16: "It's BBB + risk premium +
+    cost premium -- for all three presets"), and he ruled the spread is taken as published.
+    `floor_from_credit_grid` below nets the same grid a DIFFERENT way for a DIFFERENT number;
+    that the system now converts a credit spread into a risk premium by two routes is an open
+    methodology question on the register, not an accident to be tidied away here.
+    """
+    col = f"spread_{rating}"
+    if col not in cg.columns:
+        raise KeyError(f"credit grid has no column {col!r}; has {list(cg.columns)}")
+    return float(np.interp(tenor, cg.index.to_numpy(), cg[col].to_numpy()))
+
+
+def floor_from_credit_grid(cg, wedge=1.0, lgd=LGD, hazard=HAZARD, liquidity=LIQUIDITY, tenor=30.0):
     """Market-ERP floor (%) = bond risk premium + equity convergence premium.
     bond risk premium = IG index spread − expected loss − liquidity haircut."""
     ig = float(np.interp(tenor, cg.index.to_numpy(), cg["ig_index_spread"].to_numpy()))

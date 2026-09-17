@@ -135,6 +135,13 @@ COST_FLOOR = 0.25
 BANDS = {
     "vs_1y":       (0.5283, 2.50, 0.35),   # lo is the derived feasibility floor / median
     "corp_prem":   (0.0,    4.00, 1.00),
+    # The market-ERP plateau's credit anchor, live since 2026-09-16. The band is wide because
+    # the BBB 30-year spread genuinely goes there: today's 1.225 sits at the 9th percentile of
+    # the 1977-2021 Moody's Baa record (median 1.75) and the widest on record is 5.76
+    # (Nov 2008). The MOVE limit is what actually guards this -- the plateau feeds every
+    # company's cost of equity, so a jump this size in one month is a data fault until proven
+    # otherwise, not a market event to publish unexamined.
+    "bbb_spread_30y": (0.0,  8.00, 1.00),
     "breakeven1y": (0.0,    6.00, 1.00),
     "cost":        (0.25,   1.50, 0.05),   # lo == COST_FLOOR; the glide runs down to it
     "fey_in":      (2.0,   12.00, 1.00),
@@ -186,6 +193,32 @@ def derive_corp_prem(root: str, asof: dt.date, log=print) -> float:
     if math.isnan(val):
         raise ReanchorRefused("corp_prem derived as NaN from the credit grid")
     log(f"  corp_prem: {val:.4f} (floor_from_credit_grid, wedge=0.50)")
+    return val
+
+
+def derive_bbb_spread_30y(root: str, asof: dt.date, log=print) -> float:
+    """The market-ERP plateau's credit anchor: the BBB 30-year spread AS PUBLISHED.
+
+    Same grid and same freshness check as corp_prem, and deliberately the same cadence -- the
+    plateau was three judgment constants until James ruled on 2026-09-16 that it should track
+    the credit market ("The ERP should reflect current risk perceptions -- whether low or
+    high"), and a rule that only moves when someone edits a file is not that.
+
+    NO NETTING. corp_prem, from the same grid three lines up, subtracts expected loss and a
+    liquidity haircut; this does not, because James ruled the spread is taken as published.
+    That the same grid is now converted into a risk premium two different ways is a real
+    methodology question and it is ON THE REGISTER for him, not resolved here by quietly
+    making one of them match the other."""
+    from asfp import volsurface as VS
+    path = os.path.join(root, "outputs", "market_credit_latest.csv")
+    _check_source_age(path, asof, log=log)
+    cg = pd.read_csv(path).set_index("tenor")
+    val = float(VS.credit_spread(cg, BED.CREDIT_ANCHOR_RATING, BED.CREDIT_ANCHOR_TENOR))
+    if math.isnan(val):
+        raise ReanchorRefused("bbb_spread_30y derived as NaN from the credit grid")
+    log(f"  bbb_spread_30y: {val:.4f} ({BED.CREDIT_ANCHOR_RATING} @ "
+        f"{BED.CREDIT_ANCHOR_TENOR:.0f}y, as published -- no netting); "
+        f"plateaus " + ", ".join(f"{k} {v:.3f}" for k, v in BED.plateau_presets(val).items()))
     return val
 
 
@@ -392,7 +425,8 @@ def carry_state(prior_state: dict, month_ends: list, log=print) -> tuple[float, 
         reals, nom, sp = RR.fetch_daily_inputs(me.isoformat())
         real, norm_ey = RR.construct_legs(prior_state, reals, nom, sp)
         r = BED.build_asof(real, norm_ey, prior_state["vs"], fey, dur_,
-                           prior_state["cost"], prior_state["corp_prem"])
+                           prior_state["cost"], prior_state["corp_prem"],
+                           bbb_spread_30y=RR.credit_anchor(prior_state))
         log(f"  replay {me}: eff_coe={r['eff_coe']:.4f}  fey {fey:.4f}->{r['fey_out']:.4f}  "
             f"D {dur_:.4f}->{r['D_out']:.4f}")
         fey, dur_ = float(r["fey_out"]), float(r["D_out"])
@@ -415,7 +449,13 @@ def apply_guards(new: dict, prior: dict, log=print) -> list:
         "cost": prior.get("cost"),
         "fey_in": prior.get("fey_in"),
         "D_in": prior.get("D_in"),
+        "bbb_spread_30y": prior.get("bbb_spread_30y"),
     }
+    missing = [k for k in BANDS if k not in new]
+    if missing:
+        raise ReanchorRefused(
+            f"the guard was handed no value for {missing}; every banded input must be present. "
+            f"An input that is not in the view is an input nobody is guarding.")
     for key, (lo, hi, max_move) in BANDS.items():
         val = new[key]
         if val is None or math.isnan(val):
@@ -472,13 +512,14 @@ def reanchor(root: str = ".", asof: str | None = None, dry_run: bool = False,
     vs_curve, vs_1y, vs_diag = derive_vs(asof_d, prior, log=log)
     fey_in, d_in = carry_state(prior, replays, log=log)
     corp_prem = derive_corp_prem(root, asof_d, log=log)
+    bbb_spread_30y = derive_bbb_spread_30y(root, asof_d, log=log)
     breakeven1y, be_amber, be_notes = derive_breakeven1y(root, prior, asof_d, log=log)
     cost = cost_for(asof_d)
     log(f"  cost: {cost:.4f} (raw {BED.cost_of_year(asof_d.year + (asof_d.timetuple().tm_yday-1)/365.0):.4f}, "
         f"floored at {COST_FLOOR})")
 
     guard_view = dict(vs_1y=vs_1y, corp_prem=corp_prem, breakeven1y=breakeven1y,
-                      cost=cost, fey_in=fey_in, D_in=d_in)
+                      cost=cost, fey_in=fey_in, D_in=d_in, bbb_spread_30y=bbb_spread_30y)
     amber = apply_guards(guard_view, prior, log=log) + be_amber
     notes = be_notes
     for m in notes:
@@ -492,6 +533,12 @@ def reanchor(root: str = ".", asof: str | None = None, dry_run: bool = False,
         "D_in": round(d_in, 6),
         "cost": round(cost, 6),
         "corp_prem": round(corp_prem, 6),
+        "bbb_spread_30y": round(bbb_spread_30y, 6),
+        "bbb_spread_30y_note": (
+            "BBB 30-year spread AS PUBLISHED (no netting of expected loss or liquidity) from "
+            "outputs/market_credit_latest.csv, read by asfp.volsurface.credit_spread. The "
+            "market-ERP plateau is BBB + PLATEAU_ADDONS[preset]; the cost premium is a "
+            "SEPARATE line and is never folded in. James, 2026-09-16."),
         "breakeven1y": round(breakeven1y, 6),
         # CARRIED FORWARD, DELIBERATELY AND IN WRITING. The S&P 500 EPS normalization job does
         # not exist yet. Measured influence on the published eff_coe: moving normalized_X4 from
@@ -514,6 +561,9 @@ def reanchor(root: str = ".", asof: str | None = None, dry_run: bool = False,
                    "median": getattr(__import__("vol_scale_v3"), "VIX1Y_MEDIAN", None),
                    "vs_1y": round(vs_1y, 6)},
             "corp_prem": "asfp.volsurface.floor_from_credit_grid(outputs/market_credit_latest.csv, wedge=0.50)",
+            "bbb_spread_30y": ("asfp.volsurface.credit_spread(outputs/market_credit_latest.csv, "
+                               "'BBB', 30.0) -- AS PUBLISHED, no netting. The market-ERP plateau "
+                               "anchor; James's ruling 2026-09-16."),
             "breakeven1y": ("1-year MARKET breakeven (nominal Treasury minus TIPS real) from "
                             "outputs/curve_latest.csv, republished every weekday by asfp.run. "
                             "NOT Cleveland expected inflation -- James's ruling 2026-08-19: a "
@@ -525,7 +575,8 @@ def reanchor(root: str = ".", asof: str | None = None, dry_run: bool = False,
             "fey_in_D_in": "prior state replayed through build_asof at the prior month's last business day",
             "normalized_X4_cpi_factor": "CARRIED FORWARD from the prior vintage; normalization job not built. Worth <1bp -- see the inline note.",
             "prior_values": {k: prior.get(k) for k in
-                             ("fey_in", "D_in", "cost", "corp_prem", "breakeven1y")},
+                             ("fey_in", "D_in", "cost", "corp_prem", "breakeven1y",
+                              "bbb_spread_30y")},
             "amber": amber,
             "notes": notes,
         },

@@ -9,16 +9,21 @@ Confirms, all offline:
      of intent.
   2. Preset A and C files are written, validate against apply_erp_overlay's OWN readers (the
      same identity gates the live overlay enforces on B every day), and their effective cost
-     of equity orders with the plateau (A's 3.35pp pure-risk plateau is the highest of the
-     three, C's 2.05pp the lowest) -- read from PLATEAU_PRESETS itself rather than assumed,
-     so a future re-numbering cannot silently invert this check.
+     of equity orders with the plateau -- read from the preset constants themselves rather
+     than assumed, so a re-numbering cannot silently invert this check.
+
+     IT WAS A RE-NUMBERING, AND THIS IS THE TEST THAT SURVIVED IT. Until 2026-09-16, A was
+     the HIGHEST plateau (3.35) and C the lowest (2.05). James inverted the letters that day:
+     A is now BBB + 1.25, the lowest, and C is BBB + 2.75, the highest. Because the ordering
+     is read out of the constants, nothing below needed changing except the prose -- which is
+     the whole reason it was written this way.
 """
 import json, os, sys, tempfile, importlib.util
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 import run_erp_daily as rr
 import held_state as hs
-from build_erp_daily import PLATEAU_PRESETS, PLATEAU_DEFAULT
+from build_erp_daily import PLATEAU_ADDONS, PLATEAU_DEFAULT, plateau_presets
 
 
 def _load_overlay():
@@ -52,10 +57,10 @@ def test_all_three_presets_publish_and_validate():
     d = tempfile.mkdtemp()
     results = rr.run_all_presets("2026-06-01", knots, nominal_1y=3.83, sp_close=7450.03,
                                   state=state, outdir=d)
-    assert set(results) == set(PLATEAU_PRESETS), f"expected presets {set(PLATEAU_PRESETS)}, got {set(results)}"
+    assert set(results) == set(PLATEAU_ADDONS), f"expected presets {set(PLATEAU_ADDONS)}, got {set(results)}"
 
     eff_by_preset = {}
-    for preset in PLATEAU_PRESETS:
+    for preset in PLATEAU_ADDONS:
         suffix = "" if preset == PLATEAU_DEFAULT else f"_{preset}"
         curve_path = os.path.join(d, f"TODAY_forward_curve_latest{suffix}.csv")
         eff_path = os.path.join(d, f"ERP_effective_latest{suffix}.csv")
@@ -66,14 +71,16 @@ def test_all_three_presets_publish_and_validate():
         assert len(curve) == 30, f"preset {preset}: expected 30 tenors, got {len(curve)}"
         eff_by_preset[preset] = eff
 
-    # A's pure-risk plateau (3.35) is the highest of the three, C's (2.05) the lowest -- the
-    # long end of the curve, and therefore the effective COE, must order the same way.
-    order = sorted(PLATEAU_PRESETS, key=lambda p: PLATEAU_PRESETS[p])          # low -> high plateau
+    # The long end of the curve, and therefore the effective COE, must order with the plateau.
+    # Read the plateaus at THIS state's own credit anchor rather than from a constant, since
+    # the plateau is a market reading now.
+    plats = plateau_presets(rr.credit_anchor(state))
+    order = sorted(plats, key=lambda p: plats[p])                              # low -> high plateau
     coe = [eff_by_preset[p]["eff_coe"] for p in order]
     assert coe == sorted(coe), (
         f"effective COE must order with the plateau ({order}); got {list(zip(order, coe))}")
     print(f"three presets published and validated: "
-          f"{[(p, round(eff_by_preset[p]['eff_coe'], 4)) for p in PLATEAU_PRESETS]}")
+          f"{[(p, round(eff_by_preset[p]['eff_coe'], 4)) for p in PLATEAU_ADDONS]}")
     print(f"  plateau ordering holds: {order} -> COE {coe}")
 
 

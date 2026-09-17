@@ -77,6 +77,9 @@
     "amber": [],
     "notes": [
       "breakeven1y 2.2005 comes from a front-CONSTRUCTED curve point (reliability 0.0): no TIPS matures inside a year, so the 1-year real yield is extrapolated. Bounded -- ~4.6bp of eff_coe per 68bp."
-    ]
-  }
+    ],
+    "bbb_spread_30y": "asfp.volsurface.credit_spread(outputs/market_credit_latest.csv, 'BBB', 30.0) -- AS PUBLISHED, no netting"
+  },
+  "bbb_spread_30y": 1.225,
+  "bbb_spread_30y_note": "BBB 30-year spread AS PUBLISHED (no netting of expected loss or liquidity) from outputs/market_credit_latest.csv, read by asfp.volsurface.credit_spread. The market-ERP plateau is BBB + PLATEAU_ADDONS[preset]; the cost premium is a SEPARATE line and is never folded in. James, 2026-09-16."
 }

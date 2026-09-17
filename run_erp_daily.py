@@ -8,8 +8,25 @@ and deterministic. __main__ is a self-contained SMOKE that reproduces June from 
 and writes the two files, so the writer path is verifiable without a live feed.
 """
 import json, csv, numpy as np
-from build_erp_daily import build_asof, PLATEAU_PRESETS, PLATEAU_DEFAULT
+from build_erp_daily import build_asof, PLATEAU_ADDONS, PLATEAU_DEFAULT
 from held_state import resolve_held_state, JUNE_REPRO_STATE  # noqa: F401
+
+def credit_anchor(state):
+    """The BBB 30-year spread this vintage's plateau is anchored to.
+
+    REQUIRED, and absent means STOP. Constitution 23's rule in this repo's own terms: silence
+    must never select a default. A fallback here would be a hardcoded plateau that nobody
+    could see, which is precisely what the 2026-09-16 change removed. `reanchor.py` writes
+    this key from outputs/market_credit_latest.csv at every monthly re-anchor, beside
+    corp_prem, from the same grid."""
+    v = state.get("bbb_spread_30y")
+    if v is None:
+        raise KeyError(
+            "held state carries no 'bbb_spread_30y'; the market-ERP plateau has been "
+            "credit-anchored since 2026-09-16 and there is no default. Re-anchor the state "
+            "(reanchor.py writes it from outputs/market_credit_latest.csv).")
+    return float(v)
+
 
 def construct_legs(state, real_knots, nominal_1y, sp_close):
     """ERP-owned input construction. `real_knots` is {tenor: real par yield pct} and EVERY key
@@ -31,13 +48,29 @@ def write_outputs(asof_date, r, outdir=".", suffix=""):
         for i in range(30):
             w.writerow([i+1,round(r["fwd_real"][i],4),round(r["fwd_erp"][i],4),round(r["fwd_coe"][i],4),
                         round(r["spot_real"][i],4),round(r["spot_erp"][i],4),round(r["spot_coe"][i],4)])
+    # THE PLATEAU DECOMPOSITION TRAVELS WITH THE NUMBER (James, 2026-09-16). The six leading
+    # columns are unchanged and in their original order, so every existing consumer --
+    # apply_erp_overlay.load_effective reads by NAME and checks the eff identity -- is
+    # unaffected. The provenance columns are appended so the plateau is reconstructible from
+    # this file alone: spread + add-on = erp_plateau, + cost_premium = equity_premium_plateau,
+    # + rate_response = year30_spot_erp, which is the floor.
+    d=r["decomposition"]
+    prov=["credit_anchor_rating","credit_anchor_tenor","bbb_spread_30y","risk_addon",
+          "erp_plateau","cost_premium","equity_premium_plateau","rate_response",
+          "year30_spot_erp","corp_prem_floor","corp_prem_binds",
+          "net_basis_expected_loss","net_basis_liquidity","net_basis_erp_plateau"]
+    def _r(v): return round(v,6) if isinstance(v,float) else v
     with open(f"{outdir}/ERP_effective_latest{suffix}.csv","w",newline="") as f:
-        w=csv.writer(f); w.writerow(["vintage","date","eff_tips_ry","eff_erp","eff_coe","duration"])
-        w.writerow([asof_date, asof_date, round(r["eff_tips"],4), round(r["eff_erp"],4), round(r["eff_coe"],4), round(r["D_out"],2)])
+        w=csv.writer(f); w.writerow(["vintage","date","eff_tips_ry","eff_erp","eff_coe","duration",
+                                     "preset"]+prov)
+        w.writerow([asof_date, asof_date, round(r["eff_tips"],4), round(r["eff_erp"],4),
+                    round(r["eff_coe"],4), round(r["D_out"],2), r["preset"]]
+                   +[_r(d[k]) for k in prov])
 
 def run(asof_date, real_knots, nominal_1y, sp_close, state, outdir="."):
     real, norm_ey = construct_legs(state, real_knots, nominal_1y, sp_close)
-    r=build_asof(real, norm_ey, state["vs"], state["fey_in"], state["D_in"], state["cost"], state["corp_prem"])
+    r=build_asof(real, norm_ey, state["vs"], state["fey_in"], state["D_in"], state["cost"],
+                 state["corp_prem"], bbb_spread_30y=credit_anchor(state))
     write_outputs(asof_date, r, outdir)
     return r
 
@@ -61,9 +94,10 @@ def run_all_presets(asof_date, real_knots, nominal_1y, sp_close, state, outdir="
     """
     real, norm_ey = construct_legs(state, real_knots, nominal_1y, sp_close)
     out = {}
-    for preset in PLATEAU_PRESETS:                       # "A", "B", "C" -- the dict's own order
+    for preset in PLATEAU_ADDONS:                        # "A", "B", "C" -- the dict's own order
         r = build_asof(real, norm_ey, state["vs"], state["fey_in"], state["D_in"],
-                        state["cost"], state["corp_prem"], preset=preset)
+                        state["cost"], state["corp_prem"], preset=preset,
+                        bbb_spread_30y=credit_anchor(state))
         suffix = "" if preset == PLATEAU_DEFAULT else f"_{preset}"
         write_outputs(asof_date, r, outdir, suffix=suffix)
         out[preset] = r

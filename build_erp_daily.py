@@ -34,14 +34,72 @@ R_NEUTRAL=2.0; H_CONV=20.0; VARP=3.0; C=7.5; VOLNORM=13.0
 G_REAL=0.0175; D_LO=12.0; D_KNEE=30.0; D_MAX=60.0
 LO,HI=0.5,4.5; BETA_IN=0.30; KMAX=5.0; SCALE=1.3; CASH_HURDLE=1.5
 CORP_PREM_DEFAULT=1.8   # BAA-AAA credit file ends 2021; default floor, non-binding at current ERP
-# Plateau presets (AEG-ERP-TASK6-BUILD-SPEC-2026-08-12.md sec.4; landed 2026-08-12).
-# Pure-risk long-run targets the curve blends toward as T grows. Front end (T<=3, option-
-# implied) is untouched by any preset; the blend ramps in from T=3 to T=30 and is full-
-# weight (100% preset) at T>=30 and beyond, matching how gdecay/gap_decay already go flat
-# past year 30. corp_prem stays a separate, lower hard floor underneath the blended value
-# (Task 6 sec.3 -- the floor and the preset are two different numbers, not one).
-PLATEAU_PRESETS={"A":3.35,"B":2.40,"C":2.05}   # pure-risk plateau, total = +cost (~0.50 today)
-PLATEAU_DEFAULT="B"
+# ============================================================================================
+# THE PLATEAU IS CREDIT-ANCHORED. James, 2026-09-16.
+# docs/SPEC-Market-ERP-Plateau-Credit-Anchor-2026-09-16.md (aeg-project).
+# ============================================================================================
+# The plateau is the pure-risk long-run target the curve blends toward as T grows. The front
+# end (T<=3, option-implied) is untouched by any preset; the blend ramps in from T=3 to T=30
+# and is full weight at T>=30 and beyond, matching how gdecay/gap_decay already go flat past
+# year 30. corp_prem stays a separate, lower hard floor underneath the blended value (Task 6
+# sec.3 -- the floor and the preset are two different numbers, not one).
+#
+# WHAT CHANGED. It was three judgment constants, {"A":3.35,"B":2.40,"C":2.05}. James:
+#
+#   "Let's go with BBB + [add-on]. The ERP should reflect current risk perceptions -- whether
+#    low or high."
+#   "This is Preset B. Preset A will use BBB + 1.25% and preset C will use BBB + 2.75%."
+#   "It's BBB + risk premium + cost premium -- for all three presets. The only thing that
+#    differs is the risk premium."
+#
+# So the plateau is now READ from the live credit grid, never hardcoded -- TASK6 sec.3 is
+# explicit that a floor-shaped number "is not a number to hardcode anywhere", and the same
+# applies to its anchor. The BBB 30-year spread is taken AS PUBLISHED: no netting of expected
+# loss, no liquidity haircut. (`floor_from_credit_grid` nets the same grid for corp_prem. That
+# the system now converts a credit spread into a risk premium two different ways is on the
+# register as an open methodology question for James; it is deliberately not settled here.)
+#
+# *** THE LETTERS ARE INVERTED FROM EVERYTHING WRITTEN BEFORE 2026-09-16. ***
+# A is now the LOWEST premium and C the HIGHEST. Until this date A was the highest plateau
+# (3.35) and C the lowest (2.05). Any valuation pack whose run date precedes this change means
+# the OLD letter by the same letter.
+#
+# *** THE COST PREMIUM IS NOT IN HERE, AND PUTTING IT IN IS THE ONE MISTAKE THAT WOULD LOOK
+#     CORRECT. *** build_asof adds `cost` itself, separately, at every tenor -- which is
+# exactly the separate-line-item treatment James ruled on ("The cost premium decreases over
+# time... It should be kept as a separate line item in the decomposition. Equity risk premium
+# + equity cost premium = Equity premium"). The value handed to the plateau slot is therefore
+# BBB + risk_addon and nothing else. Writing BBB + risk_addon + cost there would match his
+# stated identity if read carelessly and would silently add ~49bp to EVERY company's cost of
+# equity. tests/test_plateau_credit_anchor.py::test_cost_premium_appears_exactly_once exists
+# for that one mistake.
+#
+#     BBB 30-year spread, as published            1.225   <- market_credit_latest.csv
+#   + RISK premium add-on      A 1.25 / B 2.00 / C 2.75   <- THE ONLY THING A PRESET CHANGES
+#   = EQUITY RISK PREMIUM plateau  A 2.475 / B 3.225 / C 3.975   <- what goes in the slot
+#   + EQUITY COST PREMIUM (cost_of_year glide)   +0.493   <- SEPARATE, added by the engine
+#   = EQUITY PREMIUM plateau       A 2.968 / B 3.718 / C 4.468
+#
+CREDIT_ANCHOR_RATING = "BBB"
+CREDIT_ANCHOR_TENOR = 30.0
+PLATEAU_ADDONS = {"A": 1.25, "B": 2.00, "C": 2.75}   # RISK premium only; cost is NOT in here
+PLATEAU_DEFAULT = "B"
+
+
+def plateau_from_credit(bbb_spread_30y, preset):
+    """The EQUITY RISK PREMIUM plateau (%) = the credit anchor as published + the preset's
+    RISK add-on. The cost premium is not included and must not be -- see the block above."""
+    if preset not in PLATEAU_ADDONS:
+        raise KeyError(f"unknown preset {preset!r}; use one of {list(PLATEAU_ADDONS)}")
+    return float(bbb_spread_30y) + PLATEAU_ADDONS[preset]
+
+
+def plateau_presets(bbb_spread_30y):
+    """All three plateaus at one credit anchor, in A/B/C order. Replaces the old
+    PLATEAU_PRESETS dict, which is deliberately GONE rather than left pointing at stale
+    constants: an importer that still wants the 3.35/2.40/2.05 triple must fail loudly, since
+    those letters no longer mean what they used to."""
+    return {p: plateau_from_credit(bbb_spread_30y, p) for p in PLATEAU_ADDONS}
 def plateau_w(T): return float(np.interp(T,[1,3,10,20,30],[0.0,0.0,0.35,0.75,1.0]))
 RVb={1:.195,2:.18,3:.172,5:.158,7:.148,10:.138,15:.126,20:.118,25:.112,30:.108}
 def rvbase(T): ks=sorted(RVb); return float(np.interp(T,ks,[RVb[k] for k in ks]))
@@ -89,15 +147,18 @@ def _vs_at(vs, T):
     return float(v[min(int(T), 30) - 1])
 
 
-def build_asof(real_tips_knots, norm_ey, vs, fey_in, D_in, cost, corp_prem=CORP_PREM_DEFAULT, preset=PLATEAU_DEFAULT):
+def build_asof(real_tips_knots, norm_ey, vs, fey_in, D_in, cost, corp_prem=CORP_PREM_DEFAULT,
+               preset=PLATEAU_DEFAULT, *, bbb_spread_30y):
     """One daily step from the incoming monthly state. Returns effective + fwd term structure.
 
     `real_tips_knots` is {tenor: real par yield pct} and EVERY key is used as an interpolation
     knot. It was named `real_tips_5pt` and hard-coded to [1,5,10,20,30] until 2026-09-03; the
     note on the interpolation line below says why that was wrong.
     """
-    if preset not in PLATEAU_PRESETS: raise KeyError(f"unknown preset {preset!r}; use one of {list(PLATEAU_PRESETS)}")
-    preset_val=PLATEAU_PRESETS[preset]
+    # `bbb_spread_30y` is KEYWORD-ONLY AND HAS NO DEFAULT, on purpose. The plateau is now a
+    # market reading, and a default here would be a hardcoded plateau wearing a different hat:
+    # a caller that forgets it gets a TypeError naming the parameter, never a quiet number.
+    preset_val=plateau_from_credit(bbb_spread_30y, preset)
     # ---------------------------------------------------------------------------------------
     # EVERY PUBLISHED KNOT, AND A MONOTONE INTERPOLANT. Changed 2026-09-03, approved by James.
     #
@@ -141,9 +202,39 @@ def build_asof(real_tips_knots, norm_ey, vs, fey_in, D_in, cost, corp_prem=CORP_
     erpT=np.array([max(corp_prem, (1-plateau_w(i+1))*base_val_T(norm_ey,yvT[i],float(Tclip[i]),_vs_at(vs,Tclip[i]),fey_out)+plateau_w(i+1)*preset_val+Rc)+cost for i in range(30)])
     coeT=yvT+erpT
     fr=fwd_from_spot(yvT/100.0)*100.0; fc=fwd_from_spot(coeT/100.0)*100.0; fe=fc-fr
+    # THE DECOMPOSITION, PUBLISHED LINE BY LINE (James, 2026-09-16: the cost premium "should be
+    # kept as a separate line item in the decomposition. Equity risk premium + equity cost
+    # premium = Equity premium"). Every line below is carried into the daily output and into
+    # ERP_effective_latest.csv's provenance columns, so the plateau is reconstructible from the
+    # published files alone rather than from a document. Constitution 16a: the reader must be
+    # able to see which number is which.
+    #
+    # The two `_net_basis_*` lines are RECORDED, NOT USED. `floor_from_credit_grid` converts a
+    # credit spread into a risk premium by netting expected loss and a liquidity haircut, and
+    # this build does not -- James ruled the spread is taken as published. Publishing what the
+    # net basis WOULD have given, from the shared constants, is what lets that open register
+    # question be settled later from the files instead of from a rerun.
+    from asfp.volsurface import LGD, HAZARD, LIQUIDITY
+    expected_loss = LGD * HAZARD
+    decomposition = dict(
+        credit_anchor_rating=CREDIT_ANCHOR_RATING,
+        credit_anchor_tenor=CREDIT_ANCHOR_TENOR,
+        bbb_spread_30y=float(bbb_spread_30y),          # as published, no netting
+        risk_addon=float(PLATEAU_ADDONS[preset]),      # the ONLY thing a preset changes
+        erp_plateau=float(preset_val),                 # = spread + add-on; pure risk
+        cost_premium=float(cost),                      # SEPARATE LINE, never folded in
+        equity_premium_plateau=float(preset_val)+float(cost),
+        rate_response=float(Rc),
+        year30_spot_erp=float(erpT[29]),               # = plateau + Rresp + cost, the floor
+        corp_prem_floor=float(corp_prem),
+        corp_prem_binds=bool(corp_prem > (bvc+Rc)),
+        net_basis_expected_loss=float(expected_loss),  # recorded only -- NOT applied
+        net_basis_liquidity=float(LIQUIDITY),          # recorded only -- NOT applied
+        net_basis_erp_plateau=float(preset_val)-expected_loss-LIQUIDITY,   # recorded only
+    )
     return dict(eff_tips=tips_eff,eff_erp=eff_erp,eff_coe=eff_coe,D_out=D_out,fey_out=fey_out,
                 spot_real=yvT,spot_erp=erpT,spot_coe=coeT,fwd_real=fr,fwd_erp=fe,fwd_coe=fc,
-                preset=preset,preset_pure_risk=preset_val)
+                preset=preset,preset_pure_risk=preset_val,decomposition=decomposition)
 
 # ---------- vol_scale helper (monthly re-anchor; NOT needed by the hermetic gate) ----------
 # SUPERSEDED 2026-08-18 (session 13, approved by James): this Shiller-semi-deviation method
@@ -174,6 +265,23 @@ def vol_scale_from_shiller(asof_month, path='/tmp/shiller/shiller.csv'):
 JUNE_TIPS={1:1.07,5:1.885,10:2.204,20:2.745,30:2.73}
 JUNE_NORM_EY=3.138
 JUNE_STATE=dict(fey_in=6.02, D_in=24.72, cost=0.503)          # May->June incoming state
+
+# ---------------------------------------------------------------- THE GATE'S CREDIT ANCHOR
+# NOT A MARKET NUMBER. DO NOT QUOTE IT, DO NOT COPY IT INTO A STATE FILE.
+#
+# Every reference below this line was measured at the OLD preset-B plateau of 2.40, and their
+# job is to prove THE ENGINE has not moved -- the vs(T) landing, the scalar back-compatibility
+# path, the PCHIP interpolation. Re-baselining them for the 2026-09-16 plateau change would
+# have thrown that away: an engine regression and a methodology change would then be
+# indistinguishable, which is the whole reason this file keeps a superseded reference
+# executable in the first place.
+#
+# So the gate is handed the spread that REPRODUCES the old preset-B plateau exactly:
+#     GATE_BBB + PLATEAU_ADDONS["B"] = 0.40 + 2.00 = 2.40
+# and every number below stands unchanged and bit-for-bit. What the gate no longer pins is the
+# plateau itself; tests/test_plateau_credit_anchor.py does that, against the live credit grid.
+GATE_BBB=0.40
+GATE=dict(bbb_spread_30y=GATE_BBB, **JUNE_STATE)
 
 # ---------------------------------------------------------------- LEGACY reference (SUPERSEDED)
 # Kept EXECUTABLE, not merely kept in a comment. Its job is no longer to state what the engine
@@ -231,7 +339,7 @@ SPOT_COE_REF_AUG=[5.2798,5.6799,6.0042,6.1785,6.2757,6.3015,6.2954,6.2603,6.2139
 
 def run_gate():
     # --- CURRENT: the landed vs(T) reference
-    r=build_asof(JUNE_TIPS, JUNE_NORM_EY, VS_AUG, **JUNE_STATE)
+    r=build_asof(JUNE_TIPS, JUNE_NORM_EY, VS_AUG, **GATE)
     ok_eff = all(abs(r[k]-AUG_EFF[k])<0.01 for k in AUG_EFF)
     sp=max(abs(r['spot_coe'][i]-SPOT_COE_REF_AUG[i]) for i in range(30))
     print("SELF-TEST 2026-08-18 vs(T): eff tips=%.3f erp=%.3f coe=%.3f dur=%.2f fey_out=%.3f"%(r['eff_tips'],r['eff_erp'],r['eff_coe'],r['D_out'],r['fey_out']))
@@ -240,21 +348,21 @@ def run_gate():
     assert ok_eff and sp<0.01, "ACCEPTANCE FAILED (2026-08-18 vs(T) reference)"
 
     # --- LEGACY: the scalar path must still be bit-identical
-    rl=build_asof(JUNE_TIPS, JUNE_NORM_EY, VS_JUNE, **JUNE_STATE)
+    rl=build_asof(JUNE_TIPS, JUNE_NORM_EY, VS_JUNE, **GATE)
     ok_l = all(abs(rl[k]-JUNE_EFF[k])<0.01 for k in JUNE_EFF)
     spl=max(abs(rl['spot_coe'][i]-SPOT_COE_REF[i]) for i in range(30))
     print("BACK-COMPAT June scalar: eff tips=%.3f erp=%.3f coe=%.3f   ties: %s, spot max|delta| = %.4f pp"%(rl['eff_tips'],rl['eff_erp'],rl['eff_coe'],ok_l,spl))
     assert ok_l and spl<0.01, "BACK-COMPAT FAILED (scalar path moved)"
 
     # --- a constant vs(T) vector must equal the scalar EXACTLY, not approximately
-    rc=build_asof(JUNE_TIPS, JUNE_NORM_EY, [VS_JUNE]*30, **JUNE_STATE)
+    rc=build_asof(JUNE_TIPS, JUNE_NORM_EY, [VS_JUNE]*30, **GATE)
     d=abs(rc['eff_erp']-rl['eff_erp'])
     print("  constant vs(T) vector == scalar: |delta| = %.2e pp"%d)
     assert d==0.0, "VECTOR/SCALAR PATHS DIVERGED"
 
     # --- preset invariance: a vs move is worth the same pp under A, B and C
-    dd=[build_asof(JUNE_TIPS,JUNE_NORM_EY,VS_AUG,preset=p,**JUNE_STATE)['eff_erp']
-        -build_asof(JUNE_TIPS,JUNE_NORM_EY,VS_JUNE,preset=p,**JUNE_STATE)['eff_erp'] for p in ("A","B","C")]
+    dd=[build_asof(JUNE_TIPS,JUNE_NORM_EY,VS_AUG,preset=p,**GATE)['eff_erp']
+        -build_asof(JUNE_TIPS,JUNE_NORM_EY,VS_JUNE,preset=p,**GATE)['eff_erp'] for p in ("A","B","C")]
     print("  preset invariance A/B/C: %+.9f %+.9f %+.9f  spread %.2e"%(dd[0],dd[1],dd[2],max(dd)-min(dd)))
     assert max(dd)-min(dd)<5e-10, "PRESET INVARIANCE BROKEN"
     print("  ACCEPTANCE PASSED")

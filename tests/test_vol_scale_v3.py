@@ -119,7 +119,7 @@ def test_legacy_scalar_path_is_bit_identical():
     back-compatibility assertion: if it moves, the ENGINE moved, not the input."""
     import build_erp_daily as b
     assert b.VS_JUNE == 0.9348
-    r = b.build_asof(b.JUNE_TIPS, b.JUNE_NORM_EY, b.VS_JUNE, **b.JUNE_STATE)
+    r = b.build_asof(b.JUNE_TIPS, b.JUNE_NORM_EY, b.VS_JUNE, **b.GATE)
     assert abs(r["eff_erp"] - 3.396) < 0.01 and abs(r["eff_coe"] - 5.765) < 0.01  # re-baselined 2026-09-04 to match build_erp_daily.JUNE_EFF (PCHIP landing); see LANDED-ERP-Three-Preset-Publish-2026-09-04.md
 
 
@@ -257,16 +257,22 @@ def test_6_preset_invariance_to_nine_decimals():
     for v_from, v_to in ((b.VS_JUNE, b.VS_AUG),
                          (0.90, 1.10),
                          (1.00, list(v3.vol_scale_curve_from_vix1y(45.86)))):
-        d = [b.build_asof(b.JUNE_TIPS, b.JUNE_NORM_EY, v_to, preset=p, **b.JUNE_STATE)["eff_erp"]
-             - b.build_asof(b.JUNE_TIPS, b.JUNE_NORM_EY, v_from, preset=p, **b.JUNE_STATE)["eff_erp"]
+        d = [b.build_asof(b.JUNE_TIPS, b.JUNE_NORM_EY, v_to, preset=p, **b.GATE)["eff_erp"]
+             - b.build_asof(b.JUNE_TIPS, b.JUNE_NORM_EY, v_from, preset=p, **b.GATE)["eff_erp"]
              for p in ("A", "B", "C")]
         assert max(d) - min(d) < 5e-10, d
 
 
 def test_6_presets_themselves_are_untouched():
-    """James confirmed twice that nothing in this landing touches the presets."""
+    """James confirmed twice that the vol_scale landing touches none of these.
+
+    The plateau CONSTANTS were replaced on 2026-09-16 by the credit anchor plus three risk
+    add-ons, so the first assertion now pins the add-ons and the gate's reproduction of the
+    old preset-B plateau instead of the retired triple. Everything else here is untouched and
+    still says what it said."""
     import build_erp_daily as b
-    assert b.PLATEAU_PRESETS == {"A": 3.35, "B": 2.40, "C": 2.05}
+    assert b.PLATEAU_ADDONS == {"A": 1.25, "B": 2.00, "C": 2.75}
+    assert b.plateau_from_credit(b.GATE_BBB, "B") == 2.40
     assert b.PLATEAU_DEFAULT == "B"
     assert b.C == 7.5 and b.VARP == 3.0 and b.VOLNORM == 13.0
     assert [round(b.gdecay(t), 4) for t in (1, 10, 20, 30)] == [1.12, 1.0, 0.9, 0.85]
@@ -277,7 +283,7 @@ def test_6_presets_themselves_are_untouched():
 # ---- [7] THE LANDED ACCEPTANCE REFERENCE, AND THE ENGINE'S EXACT BACKWARD COMPATIBILITY -----
 def test_7_landed_reference_reproduces():
     import build_erp_daily as b
-    r = b.build_asof(b.JUNE_TIPS, b.JUNE_NORM_EY, b.VS_AUG, **b.JUNE_STATE)
+    r = b.build_asof(b.JUNE_TIPS, b.JUNE_NORM_EY, b.VS_AUG, **b.GATE)
     # Re-baselined 2026-09-04 to match build_erp_daily.AUG_EFF (PCHIP landing); this file's copy
     # of the acceptance reference had gone stale relative to run_gate()'s own copy, caught by
     # ci-on-push running this file's pure-math tests for the first time. See
@@ -301,8 +307,8 @@ def test_7_constant_vector_equals_scalar_exactly():
     import build_erp_daily as b
     for vsv in (0.6, 0.9348, 1.4, 2.2):
         for p in ("A", "B", "C"):
-            a = b.build_asof(b.JUNE_TIPS, b.JUNE_NORM_EY, vsv, preset=p, **b.JUNE_STATE)
-            c = b.build_asof(b.JUNE_TIPS, b.JUNE_NORM_EY, np.full(30, vsv), preset=p, **b.JUNE_STATE)
+            a = b.build_asof(b.JUNE_TIPS, b.JUNE_NORM_EY, vsv, preset=p, **b.GATE)
+            c = b.build_asof(b.JUNE_TIPS, b.JUNE_NORM_EY, np.full(30, vsv), preset=p, **b.GATE)
             assert a["eff_erp"] == c["eff_erp"]
             assert max(abs(a["spot_coe"][i] - c["spot_coe"][i]) for i in range(30)) == 0.0
 
@@ -312,7 +318,7 @@ def test_7_wrong_length_vector_is_rejected():
     import build_erp_daily as b
     for bad in (np.full(29, 1.0), np.full(31, 1.0)):
         with pytest.raises(ValueError):
-            b.build_asof(b.JUNE_TIPS, b.JUNE_NORM_EY, bad, **b.JUNE_STATE)
+            b.build_asof(b.JUNE_TIPS, b.JUNE_NORM_EY, bad, **b.GATE)
 
 
 def test_7_hermetic_gate_runs_green():

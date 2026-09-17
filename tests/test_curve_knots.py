@@ -20,6 +20,8 @@ import numpy as np
 import pytest
 
 import build_erp_daily as BED
+import run_erp_daily as _RR
+RR_ANCHOR = _RR.credit_anchor
 from asfp import datasources as ds
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -33,7 +35,8 @@ def _state():
 def _build(real_knots, **kw):
     s = _state()
     return BED.build_asof(real_knots, 5.95, s["vs"], s["fey_in"], s["D_in"],
-                          s["cost"], s["corp_prem"], **kw)
+                          s["cost"], s["corp_prem"],
+                          bbb_spread_30y=RR_ANCHOR(s), **kw)
 
 
 def test_every_supplied_knot_is_reproduced_exactly():
