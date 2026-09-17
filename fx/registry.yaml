@@ -103,12 +103,23 @@ currencies:
     direction: foreign_per_usd
     country: Brazil
     history_from: "1995-01"
-    verified: false
+    verified: true
     verified_note: >-
-      Real per dollar, inverted on publication. Starts 1995-01, which is the REAL's own start (the
-      Plano Real, July 1994) -- note this is FOURTEEN YEARS SHORTER than the Brazilian consumer price
-      index in the CPI registry, which reaches 1979-12 through six currency reforms. A Brazilian
-      filer with statements before 1995 has an inflation series and no exchange rate. Untested.
+      Real per dollar, inverted on publication. VERIFIED 2026-09-17 against PagSeguro Digital
+      (PAGS), the first Brazilian filer this system has onboarded; full working in
+      AEG-Project/docs/engine/VERIFICATION-Real-Deflator-And-FX-Against-PAGS-2026-09-17.md.
+      (1) Published magnitude: usd_per_unit 0.193979 at 2026-08 = 5.1552 reais per dollar; the
+      inverted reading would have one real buying five dollars. (2) Against the filing: PAGS
+      reports FY2025 net income of R$2,076,751,000 and a USD net income of $396,929,588 implied by
+      EPS 1.44 on the 275,645,547 shares its own market cap and price imply, so the filing itself
+      says 5.2320 reais per dollar against the feed's FY2025 average of 5.5811 -- a 6.3% gap in the
+      direction a trailing-twelve-month EPS running into a stronger-real 2026 must produce.
+      (3) Direction test: putting the quoted price into reais correctly gives R$52.85 on BRL EPS of
+      R$7.53, a P/E of 7.02; inverted it gives R$1.70 and a P/E of 0.23, which is impossible for a
+      profitable going concern. Starts 1995-01, the REAL's own start (Plano Real, July 1994) --
+      FOURTEEN YEARS SHORTER than the Brazilian consumer price index, which reaches 1979-12 through
+      six currency reforms. A Brazilian filer with statements before 1995 still has an inflation
+      series and no exchange rate; that limit is untouched by this verification.
   MXN:
     daily: DEXMXUS
     monthly: EXMXUS
