@@ -114,13 +114,33 @@ currencies:
     base_period: "2015"
     country: Brazil
     history_from: "1979-12"
-    verified: false
+    verified: true
     verified_note: >-
-      Current to 2026-07 as at 2026-09-06. NOT yet reconciled to a filing. CARRIES BRAZIL'S
-      HYPERINFLATION AND SIX CURRENCY REFORMS: the index spans roughly twelve orders of magnitude
-      from 1979 to today, so an annual average of a hyperinflationary year is a far weaker summary
-      of purchasing power than it is for a low-inflation country, and a fiscal year straddling a
-      currency reform needs checking by hand before any Brazilian filer is valued.
+      VERIFIED 2026-09-17 against PagSeguro Digital (PAGS), the first Brazilian filer this system
+      has onboarded. Four checks, all recorded in
+      AEG-Project/docs/engine/VERIFICATION-Real-Deflator-And-FX-Against-PAGS-2026-09-17.md.
+      (1) The implied annual inflation series is Brazil's published IPCA ANNUAL AVERAGES -- 3.446,
+      3.665, 3.733, 3.212, 8.302, 9.280, 4.594, 4.367, 5.017 per cent for 2017 through 2025 -- and
+      NOT the Dec/Dec statistic (10.06 and 5.79 for 2021 and 2022), which is a different and equally
+      correct number, so which one this is matters. (2) The base constant is the 2026 calendar-year
+      mean of the months published, 175.6640, giving a 2025 deflator of 1.037049, a +3.705% price
+      change into the base year, matching 2026 measured inflation. (3) PAGS revenue as filed in
+      reais, 2018-2025, was deflated BY HAND to 2026 reais and the identity
+      (1+real)(1+inflation) = (1+nominal) holds to 4.441e-16 in EVERY one of the seven pairs. It
+      also shows what the filed numbers hide: 2023 nominal revenue growth of 3.438% is -1.105% in
+      real terms, and 2025's 5.573% is +0.530%. (4) The old path was reproduced for comparison --
+      convert each year's reais at that year's average exchange rate, then deflate by US CPI -- and
+      it gives a real revenue CAGR of 13.467% against 18.519% on this series: A DIFFERENCE OF 5.052
+      PERCENTAGE POINTS A YEAR, defect F2 measured on a Brazilian filing and larger than the 4.511
+      pp it showed on YMM, as a weaker currency should make it.
+      THE HYPERINFLATION CAVEAT IS NOT WITHDRAWN AND STILL BINDS ON OTHER FILERS: the index carries
+      Brazil's hyperinflation and six currency reforms and spans roughly twelve orders of magnitude
+      from 1979, so an annual average of a hyperinflationary year is a far weaker summary of
+      purchasing power than it is for a low-inflation country, and a fiscal year straddling a
+      currency reform still needs checking by hand. It does not touch PAGS: PagSeguro listed in
+      January 2018, twenty-four years after the Plano Real, no fiscal year of its straddles a
+      reform, and its highest annual inflation is 9.280% (2022). Same shape as YMM's 1993-01 floor
+      not binding on filings that begin 2019.
   MXN:
     source: oecd
     series: MEX
