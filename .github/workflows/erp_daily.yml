@@ -131,8 +131,22 @@ jobs:
           results = rr.run_all_presets(asof, reals, nominal_1y=nom, sp_close=sp, state=state, outdir="history")
           r = results["B"]
           print("PUBLISH %s: eff tips=%.4f erp=%.4f coe=%.4f dur=%.2f" % (asof, r["eff_tips"], r["eff_erp"], r["eff_coe"], r["D_out"]))
+          # THE PLATEAU IS A MARKET READING NOW, SO IT IS REPORTED FROM THE RUN'S OWN
+          # DECOMPOSITION, not re-derived here. This line read
+          # `build_erp_daily.PLATEAU_PRESETS[preset]` until 2026-09-17, and that constant was
+          # DELETED when the plateau became credit-anchored -- so this job would have written
+          # the three files, raised AttributeError on this line, and never reached the overlay
+          # or the commit: the new ERP would have stayed unpublished with the daily run red.
+          # Every gate job stayed green, because none of them runs the publish body. Found by
+          # grepping the WORKFLOWS, not just the .py files -- "a stale importer must fail
+          # loudly" only helps if you look everywhere it can be imported from.
           for preset, rp in results.items():
-              print("  preset %s (plateau %.2fpp): eff_erp=%.4f eff_coe=%.4f" % (preset, __import__("build_erp_daily").PLATEAU_PRESETS[preset], rp["eff_erp"], rp["eff_coe"]))
+              d = rp["decomposition"]
+              print("  preset %s: %s %.3f + addon %.2f = plateau %.3f  (+cost %.3f, Rresp %.3f)"
+                    " -> yr30 floor %.4f  eff_erp=%.4f eff_coe=%.4f"
+                    % (preset, d["credit_anchor_rating"], d["bbb_spread_30y"], d["risk_addon"],
+                       d["erp_plateau"], d["cost_premium"], d["rate_response"],
+                       d["year30_spot_erp"], rp["eff_erp"], rp["eff_coe"]))
           # fail-closed: validate the just-written files with the overlay's OWN readers before committing
           spec = importlib.util.spec_from_file_location("ovl", "apply_erp_overlay.py")
           ovl = importlib.util.module_from_spec(spec)
