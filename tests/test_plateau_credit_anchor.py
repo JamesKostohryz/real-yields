@@ -75,16 +75,27 @@ def test_1a_the_harness_reproduces_the_published_vintage_before_it_is_trusted():
     assert round(r["eff_coe"], 4) == 6.0877
 
 
-# The spec's section 7 table, VERBATIM, and then what the engine says.
+# The spec's section 7 table, VERBATIM, and then what THIS engine says.
 #
-# THE PLATEAU AND FLOOR COLUMNS REPRODUCE EXACTLY. They are the change. The spec's EFFECTIVE
-# columns do not, and the spec says how it got them: it "reconstructed" the construction by
-# solving the normalized earnings yield out of the published curve. That reproduces the CURVE
-# (it does, to 0.0001pp -- test_1a) but not the duration-collapsed EFFECTIVE, which build_asof
-# computes with the incoming monthly state (fey_in, D_in) and a duration weighting the
-# reconstruction did not carry. The engine is the authority, not the document: the spec's
-# effective column is wrong by -0.21 to -0.46pp and its risk-free effective by +0.34pp
-# (3.1071 against the engine's own 2.7633). Recorded here rather than quietly substituted.
+# THE PLATEAU AND FLOOR COLUMNS REPRODUCE EXACTLY. They are the change.
+#
+# THE EFFECTIVE COLUMNS DIFFER, AND -- RESOLVED 2026-09-17 -- THAT IS NOT AN ERROR IN EITHER
+# ENGINE. IT IS TWO DIFFERENT QUANTITIES UNDER ONE WORD. The spec quotes the AEG-VALUATION
+# annuity-equivalent rate: the single flat real rate that reprices a LEVEL REAL PERPETUITY over
+# the 1..30 curve plus the year-31 terminal, computed with the terminal-ERP fix already applied.
+# Reconstructed from the published 2026-09-16 curve it gives 3.1073 / 2.8684 / 5.9757 against
+# the spec's 3.1071 / 2.8685 / 5.9756 -- a match to 0.0001pp on all three.
+#
+# What THIS file publishes is a different construction for a different job: the
+# DURATION-WEIGHTED COLLAPSE that `build_asof` performs with the incoming monthly state
+# (fey_in, D_in) over the 120-year grid. It is the number in ERP_effective_latest.csv and it
+# prices the INDEX ITSELF, not a company.
+#
+# Both are correct. The collision is a labelling one, and it is exactly what aeg-project
+# constitution 16a exists to prevent -- "a document that quotes a rate says which of the three
+# it is" -- happening one rate-family across. 16a now names this engine's effective as a FOURTH
+# rate. The two sets are pinned below so the distinction cannot quietly decay into a defect
+# report again.
 SPEC_S7 = {          # preset: (plateau, year30 floor, spec's eff ERP, spec's real COE)
     "A": (2.475, 2.739, 2.9301, 6.0372),
     "B": (3.225, 3.489, 3.5199, 6.6270),
@@ -116,15 +127,20 @@ def test_1c_the_engines_own_effective_numbers_are_pinned(preset):
     assert round(100.0 / r["eff_coe"], 2) == mult
 
 
-def test_1d_the_specs_effective_column_is_not_reproducible_and_that_is_recorded():
-    """A guard that cannot fail is not a guard, and neither is a discrepancy left in prose.
-    If a later change ever DOES make the engine agree with the spec's effective column, this
-    fails and the note above SPEC_S7 has to be rewritten rather than silently outlived."""
+def test_1d_the_two_effective_constructions_stay_distinguishable():
+    """THE TWO RATES MUST NOT SILENTLY CONVERGE, because if they ever do, the note above SPEC_S7
+    stops being true and the next reader will conclude the two words mean one thing.
+
+    This is not a defect guard -- the difference is expected and correct. It is a guard on the
+    DOCUMENTATION: if a later change to the collapse, the plateau or the terminal brings the
+    duration-weighted effective onto the annuity-equivalent one, this fails and the comment
+    block has to be rewritten rather than quietly outlived."""
     for preset in ("A", "B", "C"):
         r = _run(preset)
         assert abs(r["eff_erp"] - SPEC_S7[preset][2]) > 0.1, (
-            f"{preset}: the engine now agrees with the spec's effective ERP; the recorded "
-            f"discrepancy is stale")
+            f"{preset}: the duration-collapsed effective ERP has converged on the "
+            f"annuity-equivalent one. That is not a failure, it is a change -- rewrite the "
+            f"note above SPEC_S7 and this test.")
 
 
 # ============================================================================================
