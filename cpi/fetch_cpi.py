@@ -65,10 +65,28 @@ def fetch_oecd(iso3, flow, start="1950-01"):
     TIME_PERIOD value list, and the period list is NOT in chronological order -- it must be read
     from the structure rather than assumed."""
     d = json.loads(_get(OECD.format(flow=flow, iso3=iso3, start=start)))
-    ds = (d.get("data", {}).get("dataSets") or [])
+    _data = d.get("data") or {}
+    ds = (_data.get("dataSets") or [])
     if not ds:
         raise CPIError(f"OECD returned no dataSets for {iso3}")
-    dims = d["data"]["structures"][0]["dimensions"]["observation"]
+    # SDMX-JSON SHIPS IN TWO SHAPES AND THE OECD HAS SERVED BOTH. Version 2.0 puts the
+    # observation dimensions under `structures` -- a LIST, one entry per dataset -- and 1.0 puts
+    # them under `structure`, a DICT. This code was written against 2.0 and pinned to it.
+    #
+    # On 2026-09-17 the interface was returning `structure`, and cpi_refresh.yml had been dying
+    # on `KeyError: 'structures'`. It failed SILENTLY in the sense that matters: a feed nobody
+    # reads the run log of is a feed nobody knows has stopped, and the last successful fetch was
+    # 2026-09-07 -- ten days of a deflator feed that could not refresh, found only because a
+    # Brazilian filer needed it. Accept either shape rather than pinning to whichever one is live
+    # today, and say which keys were actually present if neither is.
+    _st = _data.get("structures") or _data.get("structure")
+    if isinstance(_st, list):
+        _st = _st[0] if _st else None
+    if not isinstance(_st, dict):
+        raise CPIError(f"OECD returned neither `structure` nor `structures` for {iso3} on "
+                       f"{flow}: data keys were {sorted(_data)}. The SDMX-JSON shape has "
+                       f"changed again -- read one response by hand before guessing.")
+    dims = _st["dimensions"]["observation"]
     periods = next(x["values"] for x in dims if x["id"] == "TIME_PERIOD")
     out = {}
     for key, val in (ds[0].get("observations") or {}).items():
