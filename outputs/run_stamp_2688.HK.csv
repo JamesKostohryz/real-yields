@@ -1,0 +1,10 @@
+field,value
+ticker,2688.HK
+generated_utc,2026-09-18 15:51 UTC
+generated_iso,2026-09-18T15:51:24Z
+bonds_source,none (pure-rating)
+n_bonds,0
+run_id,35364907786
+git_sha,58f8d9d
+obs_category,unset (forecaster's judgment)
+obs_category_effective_in_published_curve,none
