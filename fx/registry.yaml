@@ -83,8 +83,15 @@ currencies:
     direction: foreign_per_usd
     country: Japan
     history_from: "1971-01"
-    verified: false
-    verified_note: "Yen per dollar, inverted on publication. Direction matches fx_rates.REGISTRY. Untested against a filing."
+    verified: true
+    verified_note: >-
+      Quote direction VERIFIED 2026-09-19 against Toyota Motor Corporation (TM, NYSE ADR, 1 ADR = 10
+      ordinary shares; files in yen); James's word 2026-09-18. Yen per dollar, inverted on
+      publication: fx_monthly carries usd_per_unit 0.0066885 for the 2025 mean, 149.51 yen per
+      dollar. Direction test on the filing: FY2026 basic EPS 295.25 yen = 2,952.5 yen per ADR; the
+      ADR at about 194 dollars put into yen correctly (price / usd_per_unit) is about 30,800 yen, a
+      P/E of about 10.4; put in the inverted way it is about 1.2 yen, a P/E of 0.0004, impossible.
+      aeg-project docs/VERIFICATION-Yen-Deflator-And-FX-Against-Toyota-2026-09-19.md.
   EUR:
     daily: DEXUSEU
     monthly: EXUSEU

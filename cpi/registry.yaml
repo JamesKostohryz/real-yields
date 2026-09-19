@@ -105,8 +105,23 @@ currencies:
     base_period: "2015"
     country: Japan
     history_from: "1955-01"
-    verified: false
-    verified_note: "COICOP 2018 dataflow, current to 2026-07. NOT yet reconciled to a filing. Deepest history of the six: 859 months."
+    verified: true
+    verified_note: >-
+      VERIFIED 2026-09-19 against Toyota Motor Corporation (TM, the NYSE ADR of 7203), the first
+      Japanese filer this system has onboarded; James's word 2026-09-18. Four checks, recorded in
+      aeg-project docs/VERIFICATION-Yen-Deflator-And-FX-Against-Toyota-2026-09-19.md. (1) The implied
+      annual inflation is Japan's published all-items CPI ANNUAL AVERAGE: -0.114, 0.475, 0.965, 0.497,
+      -0.019, -0.243, 2.506, 3.257, 2.748, 3.190 per cent for 2016 through 2025; the Statistics
+      Bureau's 2025 figure is +3.2% (2020=100 base, 111.9), and the others agree to its one decimal.
+      (2) The base constant is the 2026 calendar-year mean of the months published, 115.2246 (seven
+      months), giving a 2025 deflator of 1.010916. (3) Toyota sales revenues as filed in yen,
+      FY2016-FY2026, deflated by hand to 2026 yen: (1+real)(1+inflation) = (1+nominal) holds to
+      2.2e-16 in every one of the ten pairs. (4) The old path -- convert at each year's average rate,
+      deflate by US CPI -- gives a real revenue CAGR of -1.238% against 4.459% on this series, a
+      difference of 5.697 percentage points a year, the yen's decade of depreciation.
+      CAVEAT, NOT A DEFECT OF THIS SERIES: a fiscal year that does not end in December is deflated
+      by the calendar year of its END (Toyota's year to March 2026 by calendar 2026), so its level
+      sits about three quarters of a year's inflation off; growth rates are unaffected on average.
   BRL:
     source: oecd
     series: BRA
