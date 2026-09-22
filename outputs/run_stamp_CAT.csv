@@ -1,0 +1,10 @@
+field,value
+ticker,CAT
+generated_utc,2026-09-22 08:19 UTC
+generated_iso,2026-09-22T08:19:25Z
+bonds_source,committed-file
+n_bonds,6
+run_id,35704121937
+git_sha,b558c23
+obs_category,unset (forecaster's judgment)
+obs_category_effective_in_published_curve,none
