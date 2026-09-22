@@ -1,0 +1,10 @@
+field,value
+ticker,XOM
+generated_utc,2026-09-22 04:52 UTC
+generated_iso,2026-09-22T04:52:53Z
+bonds_source,none (pure-rating)
+n_bonds,0
+run_id,35688520050
+git_sha,02558de
+obs_category,unset (forecaster's judgment)
+obs_category_effective_in_published_curve,none
