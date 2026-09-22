@@ -1,0 +1,10 @@
+field,value
+ticker,CLX
+generated_utc,2026-09-22 17:38 UTC
+generated_iso,2026-09-22T17:38:45Z
+bonds_source,committed-file
+n_bonds,8
+run_id,35761978700
+git_sha,7f2ebc5
+obs_category,unset (forecaster's judgment)
+obs_category_effective_in_published_curve,none
