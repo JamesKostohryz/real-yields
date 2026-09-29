@@ -1,10 +1,10 @@
 field,value
 ticker,2688.HK
-generated_utc,2026-09-18 15:51 UTC
-generated_iso,2026-09-18T15:51:24Z
+generated_utc,2026-09-29 18:14 UTC
+generated_iso,2026-09-29T18:14:32Z
 bonds_source,none (pure-rating)
 n_bonds,0
-run_id,35364907786
-git_sha,58f8d9d
+run_id,36610594885
+git_sha,92e3179
 obs_category,unset (forecaster's judgment)
 obs_category_effective_in_published_curve,none
