@@ -7,7 +7,7 @@ year 3 out and therefore moves valuations.
     BBB 30-year spread, as published            1.225
   + RISK premium add-on      A 1.25 / B 2.00 / C 2.75
   = EQUITY RISK PREMIUM plateau  A 2.475 / B 3.225 / C 3.975
-  + EQUITY COST PREMIUM (cost_of_year glide)   +0.493      SEPARATE, added by the engine
+  + EQUITY COST PREMIUM (cost_of_year)          +0.493      SEPARATE, added by the engine
   = EQUITY PREMIUM plateau       A 2.968 / B 3.718 / C 4.468
 
 These run against the LIVE credit grid and the 2026-09 held state. tests/test_build_erp_daily.py
@@ -264,16 +264,12 @@ def test_5_ordering_follows_the_plateau_and_the_letters_are_inverted():
 
 
 # ============================================================================================
-# 6. cost_of_year AND ITS 0.25 FLOOR ARE UNTOUCHED
+# 6. THE PLATEAU SPEC DOES NOT OWN THE COST PREMIUM
 # ============================================================================================
-def test_6_cost_of_year_and_its_floor_are_untouched():
-    """This spec rules on the cost premium's PRESENTATION -- a separate line, never folded in
-    -- and on nothing else about it. reanchor.py's glide and floor must be bit-identical."""
+def test_6_the_cost_premium_is_the_record_line_not_this_specs():
+    """This spec ruled on the cost premium's PRESENTATION -- a separate line, never folded in --
+    and on nothing else about it. Its level is the cost premium of record (James, 2026-10-08;
+    tests/test_cost_premium_of_record.py), with the 0.25 floor kept as a guard."""
     import reanchor as RA
     assert RA.COST_FLOOR == 0.25
-    assert BED.cost_of_year(1995) == 1.5
-    assert BED.cost_of_year(2026.5) == 0.5
-    assert round(BED.cost_of_year(2026.71), 6) == 0.491325
-    assert round(BED.cost_of_year(2032), 6) == 0.267297
-    assert BED.cost_of_year(2040) < 0.25          # the raw glide goes below; the FLOOR catches it
-    assert RA.cost_for(__import__("datetime").date(2040, 1, 1)) == 0.25
+    assert BED.cost_of_year(2026.71) == BED.cost_of_year(2025.5)

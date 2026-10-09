@@ -118,7 +118,32 @@ TMAX=120; Tg=np.arange(1,TMAX+1); Tclip=np.minimum(Tg,30)
 _qg=np.linspace(0.55,1.28,4000); _mg=np.array([np.dot((q**Tg)/(q**Tg).sum(),Tg) for q in _qg])
 _wc={round(d,1):(lambda q:(q**Tg)/(q**Tg).sum())(float(np.interp(np.clip(d,_mg[0],_mg[-1]),_mg,_qg))) for d in np.round(np.arange(D_LO,60.01,0.1),1)}
 def wget(D): return _wc[round(float(np.clip(D,D_LO,60.0)),1)]
-def cost_of_year(yr): return (1.5+(0.5-1.5)*((yr-1995)/(2026.5-1995))**1.3)
+# ============================================================================================
+# THE EQUITY COST PREMIUM OF RECORD. James, 2026-10-08.
+# aeg-project docs/RULING-Cost-Premium-Of-Record-2026-10-08.md.
+# ============================================================================================
+# The cost of holding equities, INCLUDING under-diversification, relative to the bond
+# alternative, % a year. One annual line, `cost_premium_of_record.csv` beside this file, column
+# `cost_premium`: 2.0 in 1870, moving with measured cost (scaled k = 0.27) to the measured peak
+# (1972, 2.55), then measured cost exactly (cheapest route, central frequency, centred 5-yr mean).
+# Before 1973 the level is James's judgment; from 1973 it is measured. `cost_premium_low` /
+# `cost_premium_high` are the published band (start 1.5 / 2.5 with measured low / high) and are
+# never read by the engine.
+#
+# Year -> fraction: each annual value sits at mid-year (year + 0.5), straight lines between,
+# held FLAT outside the table (so 2026 onward = the 2025 value until the table is extended).
+# The same function serves the live daily ERP, the monthly re-anchor and the 1931-> market
+# cost-of-equity history (aeg-valuation idio/market_coe_history_optionb.cost_for_year), so the
+# history and today can never disagree about the cost premium.
+import os as _os
+_COST_TABLE = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "cost_premium_of_record.csv")
+_ct = pd.read_csv(_COST_TABLE)
+COST_YEARS = _ct["year"].to_numpy(dtype=float)
+COST_VALUES = _ct["cost_premium"].to_numpy(dtype=float)
+del _ct
+def cost_of_year(yr):
+    """The equity cost premium of record (% a year) at fractional year `yr`."""
+    return float(np.interp(float(yr), COST_YEARS + 0.5, COST_VALUES))
 
 def fwd_from_spot(spot):   # zero -> 1y-forward bootstrap (engine convention)
     f=[]

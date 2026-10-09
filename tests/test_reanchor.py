@@ -63,6 +63,14 @@ def repo():
     """A throwaway copy of just the files the re-anchor reads."""
     d = tempfile.mkdtemp()
     shutil.copy(os.path.join(ROOT, "ERP_HELD_STATE_2026-06.json"), d)
+    # The June vintage was written under the cost rule in force then (0.503). The fixture's prior
+    # carries the cost premium of record for its as-of date instead, so these tests exercise the
+    # state machine and not the one-time 2026-10-08 change of cost rule (which a real re-anchor
+    # reports, correctly, as an AMBER move).
+    sp = os.path.join(d, "ERP_HELD_STATE_2026-06.json")
+    st = json.load(open(sp))
+    st["cost"] = RA.cost_for(dt.date(2026, 8, 19))
+    json.dump(st, open(sp, "w"), indent=1)
     os.makedirs(os.path.join(d, "outputs"))
     os.makedirs(os.path.join(d, "history"))
     shutil.copy(os.path.join(ROOT, "outputs", "market_credit_latest.csv"),
@@ -74,16 +82,15 @@ def repo():
     return d
 
 
-# ------------------------------------------------------------------ the cost terminal rule
+# ------------------------------------------------------------------ the cost premium
 
-def test_cost_keeps_gliding_then_flatlines_at_the_floor():
-    """James, 2026-08-19: the glide keeps running at its own rate until it reaches 0.25 and
-    flatlines there. So nothing happens at 2026.5; the floor engages in mid-2032."""
-    assert RA.cost_for(dt.date(2026, 8, 19)) == pytest.approx(0.4946, abs=1e-3)
-    assert RA.cost_for(dt.date(2030, 1, 1)) == pytest.approx(0.3532, abs=1e-3)
-    assert RA.cost_for(dt.date(2032, 1, 1)) > RA.COST_FLOOR
-    assert RA.cost_for(dt.date(2033, 1, 1)) == pytest.approx(RA.COST_FLOOR)
-    assert RA.cost_for(dt.date(2050, 1, 1)) == pytest.approx(RA.COST_FLOOR)
+def test_cost_is_the_cost_premium_of_record_floored():
+    """James, 2026-10-08: the cost premium is one annual line (cost_premium_of_record.csv),
+    held flat past its last year; COST_FLOOR is a guard the line never reaches."""
+    assert RA.cost_for(dt.date(2026, 8, 19)) == pytest.approx(0.3099, abs=1e-9)
+    assert RA.cost_for(dt.date(2050, 1, 1)) == pytest.approx(0.3099, abs=1e-9)
+    assert RA.cost_for(dt.date(1960, 7, 1)) == pytest.approx(BED.cost_of_year(1960.5), abs=1e-3)
+    assert min(BED.COST_VALUES) > RA.COST_FLOOR
 
 
 def test_breakeven1y_is_the_market_series_not_expected_inflation():
@@ -96,12 +103,6 @@ def test_breakeven1y_is_the_market_series_not_expected_inflation():
     for gone in ("BE1Y_WEDGE", "EXPINF1Y_ANCHOR", "BE1Y_SERIES", "BE1Y_ANCHOR"):
         assert not hasattr(RA, gone), (
             f"{gone} is back: breakeven1y has drifted to an expected-inflation construction")
-
-
-def test_the_unfloored_glide_really_does_go_negative():
-    """The floor is not decoration. Without it the overlay crosses zero in 2038."""
-    assert BED.cost_of_year(2026.5) == pytest.approx(0.50, abs=1e-9)
-    assert BED.cost_of_year(2040.0) < 0.0
 
 
 # ------------------------------------------------------------------ the state machine walk
@@ -126,7 +127,7 @@ def test_green_run_writes_a_vs_vector_and_the_resolver_picks_it_up(repo):
     assert st["anchor_vintage"] == "2026-08"
     # THE POINT OF THE WHOLE EXERCISE: a 30-long vs(T), not June's scalar.
     assert isinstance(st["vs"], list) and len(st["vs"]) == 30
-    assert st["cost"] == pytest.approx(0.4946, abs=1e-3)   # still gliding; floor is 0.25
+    assert st["cost"] == pytest.approx(0.3099, abs=1e-9)   # the cost premium of record
     assert len(st["derivation"]["month_ends_replayed"]) == 2
 
 
@@ -207,7 +208,10 @@ def test_a_stale_vix_tier_is_refused(repo, monkeypatch):
 
 def test_a_stale_credit_grid_is_refused(repo):
     p = os.path.join(repo, "outputs", "market_credit_latest.csv")
-    old = (dt.datetime.now() - dt.timedelta(days=40)).timestamp()
+    # 40 days before the AS-OF date, not before today: the age check is measured against the
+    # as-of date, so a `now`-relative mtime stopped being stale once the calendar passed
+    # 2026-09-28 and the test went red on its own (erp-monthly-reanchor, 2026-10-01).
+    old = (dt.datetime(2026, 8, 19) - dt.timedelta(days=40)).timestamp()
     os.utime(p, (old, old))
     with pytest.raises(RA.ReanchorRefused):
         RA.reanchor(root=repo, asof="2026-08-19")
@@ -223,7 +227,7 @@ def test_an_out_of_band_input_is_refused(repo):
 
 def test_a_big_but_plausible_move_is_amber_not_red(repo):
     prior = json.load(open(os.path.join(repo, "ERP_HELD_STATE_2026-06.json")))
-    amber = RA.apply_guards(dict(vs_1y=0.9348, corp_prem=3.5, breakeven1y=2.76, cost=0.5,
+    amber = RA.apply_guards(dict(vs_1y=0.9348, corp_prem=3.5, breakeven1y=2.76, cost=prior["cost"],
                                  fey_in=6.02, D_in=24.72, bbb_spread_30y=prior["bbb_spread_30y"]),
                             prior, log=lambda *_: None)
     assert len(amber) == 1 and "corp_prem" in amber[0]

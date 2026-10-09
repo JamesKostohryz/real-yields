@@ -39,7 +39,8 @@ THE EIGHT SLOW INPUTS AND WHERE EACH COMES FROM
   breakeven1y   1y breakeven   <- the MARKET breakeven (nominal minus TIPS real) at 1y, from
                                   outputs/curve_latest.csv, rewritten every weekday. NOT
                                   Cleveland expected inflation — see derive_breakeven1y().
-  cost          cost overlay   <- cost_of_year(), glide continues, FLOORED at 0.25 (mid-2032)
+  cost          cost premium   <- cost_of_year(): the cost premium of record
+                                  (cost_premium_of_record.csv), floored at 0.25
   normalized_X4 normalized EPS <- carried forward; the normalization job is not built yet
   cpi_factor    deflator       <- carried forward, same reason
 
@@ -100,31 +101,15 @@ import run_erp_daily as RR
 
 
 # ============================================================================================
-# (0) THE COST TERMINAL RULE
+# (0) THE COST PREMIUM AND ITS FLOOR
 # ============================================================================================
-# build_erp_daily.cost_of_year() is a glide path: 1.50% in 1995 arriving at exactly 0.50% at
-# mid-2026. It has now arrived, and it was never given a terminal rule, so past 2026.5 it keeps
-# falling — and because the exponent is 1.3 it falls at an ACCELERATING rate:
+# The cost premium is build_erp_daily.cost_of_year(): the equity cost premium of record, one
+# annual line in cost_premium_of_record.csv (James's ruling 2026-10-08; aeg-project
+# docs/RULING-Cost-Premium-Of-Record-2026-10-08.md). Past its last year it is held flat.
 #
-#       2026.50   0.5000        2035      0.1358
-#       2026.63   0.4946        2038.03   0.0000  <- crosses zero
-#       2030      0.3532        2040     -0.0899
-#
-# A cost overlay that goes negative is not a cost.
-#
-# JAMES'S RULING, 2026-08-19, VERBATIM: "The cost floor should move down at whatever rate it is
-# not moving at until it reaches 0.25% and then should flatline from there."
-#
-# So the glide is NOT stopped at 0.50 -- it keeps running at its own rate and is floored at 0.25.
-# The formula reaches 0.25 in mid-2032 and is flat thereafter:
-#
-#       2026.63 (today)  0.4946        2032.00  0.2673
-#       2028             0.4377        2032.40  0.2500  <- floor engages
-#       2030             0.3532        2035+    0.2500
-#
-# This is a floor, not a stop: `max(cost_of_year(yr), 0.25)`. Nothing special happens at 2026.5.
-# The only thing being prevented is the descent through zero into a NEGATIVE cost overlay, which
-# the unfloored formula does in 2038.
+# COST_FLOOR is a guard, not a glide: a cost premium below 0.25 is refused as a cost and floored.
+# The line of record never reaches it (lowest value 0.31, 2023-25), so the floor binds only if the
+# table is extended with a lower measured value -- and then it binds visibly, in the re-anchor log.
 COST_FLOOR = 0.25
 
 # ============================================================================================
@@ -143,7 +128,7 @@ BANDS = {
     # otherwise, not a market event to publish unexamined.
     "bbb_spread_30y": (0.0,  8.00, 1.00),
     "breakeven1y": (0.0,    6.00, 1.00),
-    "cost":        (0.25,   1.50, 0.05),   # lo == COST_FLOOR; the glide runs down to it
+    "cost":        (0.25,   3.00, 0.05),   # lo == COST_FLOOR; hi covers the whole 1870-> line
     "fey_in":      (2.0,   12.00, 1.00),
     "D_in":        (12.0,  60.00, 5.00),
 }
@@ -162,7 +147,7 @@ class ReanchorRefused(Exception):
 # ============================================================================================
 
 def cost_for(asof: dt.date) -> float:
-    """The cost overlay: the glide continues at its own rate, floored at COST_FLOOR."""
+    """The equity cost premium of record at the as-of date, floored at COST_FLOOR."""
     yr = asof.year + (asof.timetuple().tm_yday - 1) / (366.0 if calendar.isleap(asof.year) else 365.0)
     return float(max(BED.cost_of_year(yr), COST_FLOOR))
 
@@ -570,8 +555,9 @@ def reanchor(root: str = ".", asof: str | None = None, dry_run: bool = False,
                             "real discount rate needs the breakeven an investor can transact "
                             "at, which includes the inflation risk and TIPS liquidity premia. "
                             "The 1-year point is front-constructed; flagged every month."),
-            "cost": (f"build_erp_daily.cost_of_year(), glide continues at its own rate, floored "
-                     f"at {COST_FLOOR} (reached mid-2032). James's ruling 2026-08-19."),
+            "cost": (f"build_erp_daily.cost_of_year(): the equity cost premium of record "
+                     f"(cost_premium_of_record.csv), floored at {COST_FLOOR}. James's ruling "
+                     f"2026-10-08."),
             "fey_in_D_in": "prior state replayed through build_asof at the prior month's last business day",
             "normalized_X4_cpi_factor": "CARRIED FORWARD from the prior vintage; normalization job not built. Worth <1bp -- see the inline note.",
             "prior_values": {k: prior.get(k) for k in
