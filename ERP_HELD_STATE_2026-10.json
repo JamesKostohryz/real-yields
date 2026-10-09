@@ -1,0 +1,88 @@
+{
+  "anchor_vintage": "2026-10",
+  "note": "Held/slow ERP state, re-anchored on the 1st business day of each month (or when the real-yield master / SP500 normalized series publish a new vintage). Between anchors ONLY the daily real curve + norm_ey move.",
+  "vs": [
+    0.9619805481874447,
+    0.9710546969619165,
+    0.9770267953904455,
+    0.9812060422186233,
+    0.9842615088920934,
+    0.9865703673044591,
+    0.9883610406952941,
+    0.9897796218832489,
+    0.9909236278238256,
+    0.9918604215258012,
+    0.9918604215258012,
+    0.9918604215258012,
+    0.9918604215258012,
+    0.9918604215258012,
+    0.9918604215258012,
+    0.9918604215258012,
+    0.9918604215258012,
+    0.9918604215258012,
+    0.9918604215258012,
+    0.9918604215258012,
+    0.9918604215258012,
+    0.9918604215258012,
+    0.9918604215258012,
+    0.9918604215258012,
+    0.9918604215258012,
+    0.9918604215258012,
+    0.9918604215258012,
+    0.9918604215258012,
+    0.9918604215258012,
+    0.9918604215258012
+  ],
+  "fey_in": 6.208758,
+  "D_in": 23.582089,
+  "cost": 0.3099,
+  "corp_prem": 1.01,
+  "bbb_spread_30y": 1.2315,
+  "bbb_spread_30y_note": "BBB 30-year spread AS PUBLISHED (no netting of expected loss or liquidity) from outputs/market_credit_latest.csv, read by asfp.volsurface.credit_spread. The market-ERP plateau is BBB + PLATEAU_ADDONS[preset]; the cost premium is a SEPARATE line and is never folded in. James, 2026-09-16.",
+  "breakeven1y": 2.2035,
+  "normalized_X4": 234.1507,
+  "cpi_factor": 0.99844,
+  "sources": {
+    "reals_5_10_20_30": "Treasury Daily Par Real Yield Curve (5/7/10/20/30); 7y optional belly point",
+    "nominal_1y": "Treasury Daily Par Yield Curve, 1Y tenor",
+    "one_year_real_rule": "real_1y = nominal_1y - breakeven1y (breakeven held from the monthly master vintage)",
+    "norm_ey_rule": "norm_ey = 100 * normalized_X4 * cpi_factor / sp_close  (SP500 normalized earnings LEVEL / real price; price is daily)",
+    "sp_close": "S&P 500 index close (nominal)"
+  },
+  "derivation": {
+    "written_by": "reanchor.py",
+    "written_at": "2026-10-09T02:58:37+00:00",
+    "prior_vintage": "2026-09",
+    "month_ends_replayed": [
+      "2026-09-30"
+    ],
+    "vs": {
+      "vix1y": 21.76,
+      "tier_used": 1,
+      "source": "CBOE history CSV",
+      "alarm": false,
+      "median": 22.62,
+      "vs_1y": 0.961981
+    },
+    "corp_prem": "asfp.volsurface.floor_from_credit_grid(outputs/market_credit_latest.csv, wedge=0.50)",
+    "bbb_spread_30y": "asfp.volsurface.credit_spread(outputs/market_credit_latest.csv, 'BBB', 30.0) -- AS PUBLISHED, no netting. The market-ERP plateau anchor; James's ruling 2026-09-16.",
+    "breakeven1y": "1-year MARKET breakeven (nominal Treasury minus TIPS real) from outputs/curve_latest.csv, republished every weekday by asfp.run. NOT Cleveland expected inflation -- James's ruling 2026-08-19: a real discount rate needs the breakeven an investor can transact at, which includes the inflation risk and TIPS liquidity premia. The 1-year point is front-constructed; flagged every month.",
+    "cost": "build_erp_daily.cost_of_year(): the equity cost premium of record (cost_premium_of_record.csv), floored at 0.25. James's ruling 2026-10-08.",
+    "fey_in_D_in": "prior state replayed through build_asof at the prior month's last business day",
+    "normalized_X4_cpi_factor": "CARRIED FORWARD from the prior vintage; normalization job not built. Worth <1bp -- see the inline note.",
+    "prior_values": {
+      "fey_in": 5.952807,
+      "D_in": 25.220348,
+      "cost": 0.493154,
+      "corp_prem": 1.03,
+      "breakeven1y": 2.2005,
+      "bbb_spread_30y": 1.225
+    },
+    "amber": [
+      "cost moved 0.1833 (limit 0.05): 0.4932 -> 0.3099"
+    ],
+    "notes": [
+      "breakeven1y 2.2035 comes from a front-CONSTRUCTED curve point (reliability 0.0): no TIPS matures inside a year, so the 1-year real yield is extrapolated. Bounded -- ~4.6bp of eff_coe per 68bp."
+    ]
+  }
+}
