@@ -1,2 +1,2 @@
 vintage,date,eff_tips_ry,eff_erp,eff_coe,duration,preset,credit_anchor_rating,credit_anchor_tenor,bbb_spread_30y,risk_addon,erp_plateau,cost_premium,equity_premium_plateau,rate_response,year30_spot_erp,corp_prem_floor,corp_prem_binds,net_basis_expected_loss,net_basis_liquidity,net_basis_erp_plateau
-2026-10-08,2026-10-08,3.0429,3.7638,6.8067,23.58,B,BBB,30.0,1.225,2.0,3.225,0.493154,3.718154,-0.312864,3.40529,1.03,False,0.18,0.3,2.745
+2026-10-09,2026-10-09,3.0294,3.633,6.6624,22.83,B,BBB,30.0,1.2315,2.0,3.2315,0.3099,3.5414,-0.308829,3.232571,1.01,False,0.18,0.3,2.7515
