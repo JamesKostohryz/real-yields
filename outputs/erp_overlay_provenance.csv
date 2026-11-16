@@ -6,6 +6,6 @@ eff_erp_pct,3.6544
 eff_coe_pct,6.5499
 equity_duration_yrs,23.03
 forward_curve_file,TODAY_forward_curve_latest.csv
-vintage_age_days,0
+vintage_age_days,3
 vintage_stale,false
-overlay_applied_utc,2026-11-13T19:55:03Z
+overlay_applied_utc,2026-11-16T21:48:26Z
