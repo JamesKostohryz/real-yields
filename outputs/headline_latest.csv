@@ -1,22 +1,22 @@
 Metric,Value
-As of,2026-11-13
+As of,2026-11-16
 ,
 REAL YIELDS (%),
-5-Year Real,2.695
-10-Year Real,2.942
-30-Year Real,3.258
-5y5y Forward Real,3.19
+5-Year Real,2.698
+10-Year Real,2.953
+30-Year Real,3.273
+5y5y Forward Real,3.207
 ,
 BREAKEVEN INFLATION (%),
-5-Year Breakeven,2.233
-10-Year Breakeven,2.193
-30-Year Breakeven,2.249
-5y5y Forward Breakeven,2.153
+5-Year Breakeven,2.179
+10-Year Breakeven,2.152
+30-Year Breakeven,2.224
+5y5y Forward Breakeven,2.125
 ,
 EXPECTED INFLATION (%),
 10-Year Expected Inflation,2.666
 5y5y Forward Expected Inflation,2.614
 ,
 CURVE SLOPES (pp),
-Real 2s10s,0.395
-Nominal 2s10s,0.306
+Real 2s10s,0.408
+Nominal 2s10s,0.326
